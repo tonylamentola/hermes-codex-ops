@@ -27,6 +27,8 @@ def _authorized(update: Update) -> bool:
 
 async def _guard(update: Update) -> bool:
     if _authorized(update):
+        if update.effective_chat:
+            audit.write(agent="telegram", action="authorized", result="ok", chat_id=update.effective_chat.id)
         return True
     audit.write(agent="telegram", action="unauthorized", result="blocked", chat_id=update.effective_chat.id if update.effective_chat else None)
     if update.message:
