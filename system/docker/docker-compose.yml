@@ -1,0 +1,111 @@
+services:
+  hermes:
+    build:
+      context: ../..
+      dockerfile: system/docker/Dockerfile
+    env_file: ../../.env
+    volumes:
+      - ../../memory:/app/memory
+      - ../../tasks:/app/tasks
+      - ../../logs:/app/logs
+      - ../../repos:/app/repos
+      - ../../config:/app/config
+    command: ["python", "-m", "system.hermes.main", "status"]
+
+  telegram:
+    build:
+      context: ../..
+      dockerfile: system/docker/Dockerfile
+    env_file: ../../.env
+    volumes:
+      - ../../memory:/app/memory
+      - ../../tasks:/app/tasks
+      - ../../logs:/app/logs
+      - ../../repos:/app/repos
+      - ../../config:/app/config
+    command: ["python", "-m", "system.telegram.bot"]
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: system/docker/Dockerfile
+    env_file: ../../.env
+    volumes:
+      - ../../memory:/app/memory
+      - ../../tasks:/app/tasks
+      - ../../logs:/app/logs
+      - ../../repos:/app/repos
+      - ../../config:/app/config
+    command: ["python", "-m", "system.services.worker"]
+    restart: unless-stopped
+
+  watcher-queue:
+    build:
+      context: ../..
+      dockerfile: system/docker/Dockerfile
+    env_file: ../../.env
+    volumes:
+      - ../../memory:/app/memory
+      - ../../tasks:/app/tasks
+      - ../../logs:/app/logs
+    command: ["sh", "-c", "while true; do python -m system.watchers.queue_watcher; sleep 300; done"]
+    restart: unless-stopped
+
+  watcher-stalled:
+    build:
+      context: ../..
+      dockerfile: system/docker/Dockerfile
+    env_file: ../../.env
+    volumes:
+      - ../../memory:/app/memory
+      - ../../tasks:/app/tasks
+      - ../../logs:/app/logs
+    command: ["sh", "-c", "while true; do python -m system.watchers.stalled_task_watcher; sleep 300; done"]
+    restart: unless-stopped
+
+  watcher-memory:
+    build:
+      context: ../..
+      dockerfile: system/docker/Dockerfile
+    env_file: ../../.env
+    volumes:
+      - ../../memory:/app/memory
+      - ../../logs:/app/logs
+    command: ["sh", "-c", "while true; do python -m system.watchers.memory_integrity_watcher; sleep 600; done"]
+    restart: unless-stopped
+
+  watcher-memory-compression:
+    build:
+      context: ../..
+      dockerfile: system/docker/Dockerfile
+    env_file: ../../.env
+    volumes:
+      - ../../memory:/app/memory
+      - ../../logs:/app/logs
+    command: ["sh", "-c", "while true; do python -m system.watchers.memory_compression_watcher; sleep 1800; done"]
+    restart: unless-stopped
+
+  watcher-github:
+    build:
+      context: ../..
+      dockerfile: system/docker/Dockerfile
+    env_file: ../../.env
+    volumes:
+      - ../../memory:/app/memory
+      - ../../logs:/app/logs
+      - ../../config:/app/config
+    command: ["sh", "-c", "while true; do python -m system.watchers.github_sync_watcher; sleep 900; done"]
+    restart: unless-stopped
+
+  watcher-deployments:
+    build:
+      context: ../..
+      dockerfile: system/docker/Dockerfile
+    env_file: ../../.env
+    volumes:
+      - ../../memory:/app/memory
+      - ../../logs:/app/logs
+      - ../../config:/app/config
+    command: ["sh", "-c", "while true; do python -m system.watchers.deployment_watcher; sleep 300; done"]
+    restart: unless-stopped

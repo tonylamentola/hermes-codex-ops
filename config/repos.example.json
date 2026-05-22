@@ -1,0 +1,12 @@
+{
+  "repositories": [
+    {
+      "owner": "example-owner",
+      "name": "example-repo",
+      "default_branch": "main",
+      "deployment_provider": "manual",
+      "deployment_url": "https://example.com",
+      "healthcheck_url": "https://example.com/health"
+    }
+  ]
+}
