@@ -41,6 +41,7 @@ Runtime details:
 - Image: `ghcr.io/open-webui/open-webui:main`
 - Port: `3000 -> 8080`
 - Data volume: `open-webui`
+- Host bridge alias: `host.docker.internal` for reaching Hermes services on the VPS host.
 
 ## Mobile Notes
 
@@ -61,3 +62,19 @@ Do not duplicate Hermes internals inside Open WebUI. Add Hermes capabilities as 
 - `tail_logs`
 
 Open WebUI can then become the richer web/mobile console while Telegram remains the fast alert and control channel.
+
+## Hermes Model Adapter
+
+The trial includes a minimal OpenAI-compatible adapter:
+
+```bash
+uvicorn system.hermes.openai_adapter:app --host 172.17.0.1 --port 8010
+```
+
+Open WebUI can use it as an OpenAI-compatible connection:
+
+- Base URL: `http://host.docker.internal:8010/v1`
+- API key: value of `HERMES_API_KEY` if set, otherwise any placeholder.
+- Model: `hermes-codex`
+
+The adapter intentionally writes to Hermes audit logs and uses existing Hermes backend settings. It is a bridge, not a new memory/task owner.

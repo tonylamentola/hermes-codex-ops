@@ -37,6 +37,7 @@ class Settings:
     telegram_allowed_chat_ids: str = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
     github_token: str = os.getenv("GITHUB_TOKEN", "")
     github_owner: str = os.getenv("GITHUB_OWNER", "")
+    hermes_api_key: str = os.getenv("HERMES_API_KEY", "")
 
     @property
     def allowed_chat_ids(self) -> set[int]:

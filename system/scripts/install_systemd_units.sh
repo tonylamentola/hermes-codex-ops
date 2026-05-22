@@ -36,6 +36,7 @@ UNIT
 
 install_unit "hermes-telegram" "source ${ROOT}/.venv/bin/activate && python -m system.telegram.bot"
 install_unit "hermes-worker" "source ${ROOT}/.venv/bin/activate && python -m system.services.worker"
+install_unit "hermes-openai-adapter" "source ${ROOT}/.venv/bin/activate && uvicorn system.hermes.openai_adapter:app --host 172.17.0.1 --port 8010"
 install_unit "hermes-watcher-queue" "source ${ROOT}/.venv/bin/activate && while true; do python -m system.watchers.queue_watcher; sleep 300; done"
 install_unit "hermes-watcher-stalled" "source ${ROOT}/.venv/bin/activate && while true; do python -m system.watchers.stalled_task_watcher; sleep 300; done"
 install_unit "hermes-watcher-memory" "source ${ROOT}/.venv/bin/activate && while true; do python -m system.watchers.memory_integrity_watcher; sleep 600; done"
@@ -47,6 +48,7 @@ systemctl daemon-reload
 systemctl enable \
   hermes-telegram.service \
   hermes-worker.service \
+  hermes-openai-adapter.service \
   hermes-watcher-queue.service \
   hermes-watcher-stalled.service \
   hermes-watcher-memory.service \

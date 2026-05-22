@@ -26,6 +26,7 @@ case "${1:-}" in
       docker run -d \
         --name "$NAME" \
         --restart unless-stopped \
+        --add-host=host.docker.internal:host-gateway \
         -p "${PORT}:8080" \
         -v "${VOLUME}:/app/backend/data" \
         "$IMAGE" >/dev/null
