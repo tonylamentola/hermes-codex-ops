@@ -21,6 +21,23 @@ def choose_backend():
     return DryRunBackend()
 
 
+def task_chat_ids(task: Task) -> set[int] | None:
+    telegram = task.payload.get("telegram")
+    if not isinstance(telegram, dict):
+        return None
+    chat_id = telegram.get("chat_id")
+    if chat_id is None:
+        return None
+    try:
+        return {int(chat_id)}
+    except (TypeError, ValueError):
+        return None
+
+
+def short_task_id(task: Task) -> str:
+    return task.id[:8]
+
+
 @dataclass
 class Worker:
     queue: TaskQueue
@@ -62,11 +79,17 @@ class Worker:
             self.queue.update_payload(task.id, payload)
             awaiting = self.queue.update_status(task.id, "awaiting_approval")
             self.audit.write(agent="worker", action="approval_required", result="awaiting_approval", task_id=task.id)
-            await self.notifier.send(f"Task awaiting approval: {task.id}\n{task.summary}")
+            await self.notifier.send(
+                f"Task awaiting approval: {short_task_id(awaiting)}\n{awaiting.summary}\nUse /approve {awaiting.id} to run it.",
+                chat_ids=task_chat_ids(awaiting),
+            )
             return awaiting
 
         self.audit.write(agent="worker", action="claim", result="active", task_id=task.id)
-        await self.notifier.send(f"Task started: {task.id}\n{task.summary}")
+        await self.notifier.send(
+            f"Task started: {short_task_id(task)}\n{task.summary}",
+            chat_ids=task_chat_ids(task),
+        )
         try:
             worker_context = await self.hermes.prepare_worker_context(task.id)
             payload = dict(task.payload)
@@ -80,7 +103,10 @@ class Worker:
                 f"- Task: `{completed.id}`\n- Summary: {completed.summary}\n- Backend: {self.hermes.backend.name}\n\n{worker_context[:2000]}",
             )
             self.audit.write(agent="worker", action="complete", result="ok", task_id=task.id)
-            await self.notifier.send(f"Task completed: {task.id}\n{task.summary}")
+            await self.notifier.send(
+                f"Task completed: {short_task_id(completed)}\n{completed.summary}",
+                chat_ids=task_chat_ids(completed),
+            )
             return completed
         except Exception as exc:
             fresh = self.queue.get(task.id)
@@ -99,7 +125,7 @@ class Worker:
                 f"- Task: `{task.id}`\n- Result: {result}\n- Error: `{exc}`",
             )
             self.audit.write(agent="worker", action="process", result=result, task_id=task.id, error=str(exc))
-            await self.notifier.send(message)
+            await self.notifier.send(message, chat_ids=task_chat_ids(failed))
             return failed
 
     async def run_forever(self) -> None:

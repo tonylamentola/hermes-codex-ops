@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import html
+from typing import Any
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from system.hermes.coordinator import HermesCoordinator
 from system.services.audit_log import AuditLog
@@ -55,6 +56,50 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     task = await hermes.submit_task(summary, priority=5, payload={"source": "telegram"})
     await update.message.reply_text(f"Queued task: {task.id}")
     audit.write(agent="telegram", action="/submit", result="queued", task_id=task.id)
+
+
+def _telegram_payload(update: Update) -> dict[str, Any]:
+    chat = update.effective_chat
+    user = update.effective_user
+    message = update.message
+    return {
+        "source": "telegram",
+        "telegram": {
+            "chat_id": chat.id if chat else None,
+            "chat_type": chat.type if chat else None,
+            "message_id": message.message_id if message else None,
+            "user_id": user.id if user else None,
+            "username": user.username if user else None,
+            "first_name": user.first_name if user else None,
+        },
+    }
+
+
+def _task_ack(task_id: str) -> str:
+    short_id = task_id[:8]
+    return (
+        f"Queued task: {short_id}\n"
+        "I will update you here when it starts, completes, fails, or needs approval.\n"
+        f"Use /tasks to see the queue or /cancel {task_id} to cancel it."
+    )
+
+
+async def plain_text_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update):
+        return
+    if not update.message or not update.message.text:
+        return
+    summary = update.message.text.strip()
+    if not summary:
+        return
+    task = await hermes.submit_task(summary, priority=5, payload=_telegram_payload(update))
+    memory.append_markdown(
+        "active-projects.md",
+        "Telegram task submitted",
+        f"- Task: `{task.id}`\n- Summary: {summary}\n- Chat: `{update.effective_chat.id if update.effective_chat else 'unknown'}`",
+    )
+    await update.message.reply_text(_task_ack(task.id))
+    audit.write(agent="telegram", action="plain_text_task", result="queued", task_id=task.id)
 
 
 async def tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -195,6 +240,7 @@ def build_app() -> Application:
         "agents": agents,
     }.items():
         app.add_handler(CommandHandler(name, handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_text_task))
     return app
 
 
