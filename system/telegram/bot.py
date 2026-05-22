@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+from pathlib import Path
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -13,6 +14,7 @@ from system.services.memory import MemoryStore
 from system.services.queue import TaskQueue
 from system.services.queue import Task
 from system.services.settings import settings
+from system.services.worker import artifact_summary
 
 
 audit = AuditLog()
@@ -142,7 +144,55 @@ def _cancel_task(task_id: str) -> Task:
 
 
 def _details_text(task: Task) -> str:
-    return f"Task {task.id[:8]}\nStatus: {task.status}\n\n{task.summary}"
+    parts = [
+        f"Task {task.id[:8]}",
+        f"Status: {task.status}",
+        f"Retries: {task.retry_count}",
+        "",
+        task.summary,
+    ]
+    if task.payload.get("backend"):
+        parts.append(f"\nBackend: {task.payload['backend']}")
+    parts.append("\n" + artifact_summary(task.payload.get("artifacts", [])))
+    if task.payload.get("worker_context"):
+        result = str(task.payload["worker_context"]).strip()
+        parts.append("\nResult preview:\n" + result[:1200])
+    return "\n".join(parts)
+
+
+def _resolve_task(task_id: str) -> Task | None:
+    exact = queue.get(task_id)
+    if exact:
+        return exact
+    matches = [task for task in queue.list(limit=500) if task.id.startswith(task_id)]
+    return matches[0] if len(matches) == 1 else None
+
+
+async def _send_task_artifacts(update: Update, task: Task) -> None:
+    if not update.message:
+        return
+    artifacts = task.payload.get("artifacts", [])
+    existing = [artifact for artifact in artifacts if artifact.get("exists")]
+    if not artifacts:
+        await update.message.reply_text("No artifacts were reported for this task.")
+        return
+    if not existing:
+        await update.message.reply_text(artifact_summary(artifacts))
+        return
+    sent = 0
+    for artifact in existing[:5]:
+        path = Path(str(artifact["path"]))
+        if not path.exists():
+            continue
+        caption = f"{task.id[:8]}: {artifact.get('display_path', path.name)}"
+        with path.open("rb") as handle:
+            if artifact.get("kind") == "image":
+                await update.message.reply_photo(photo=handle, caption=caption[:1024])
+            else:
+                await update.message.reply_document(document=handle, caption=caption[:1024])
+        sent += 1
+    if sent == 0:
+        await update.message.reply_text(artifact_summary(artifacts))
 
 
 async def plain_text_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -211,6 +261,34 @@ async def tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lines = [f"{task.status} p{task.priority} r{task.retry_count} {task.id[:8]} - {task.summary}" for task in queue.list(limit=20)]
     await update.message.reply_text("\n".join(lines) or "No tasks.")
     audit.write(agent="telegram", action="/tasks", result="ok")
+
+
+async def task_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /task TASK_ID")
+        return
+    task = _resolve_task(context.args[0])
+    if not task:
+        await update.message.reply_text(f"Unknown or ambiguous task: {context.args[0]}")
+        return
+    await update.message.reply_text(_details_text(task)[:3900])
+    audit.write(agent="telegram", action="/task", result="ok", task_id=task.id)
+
+
+async def artifacts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /artifacts TASK_ID")
+        return
+    task = _resolve_task(context.args[0])
+    if not task:
+        await update.message.reply_text(f"Unknown or ambiguous task: {context.args[0]}")
+        return
+    await _send_task_artifacts(update, task)
+    audit.write(agent="telegram", action="/artifacts", result="ok", task_id=task.id)
 
 
 async def stalled(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -324,6 +402,8 @@ def build_app() -> Application:
         "projects": projects,
         "deployments": deployments,
         "tasks": tasks,
+        "task": task_details,
+        "artifacts": artifacts,
         "stalled": stalled,
         "logs": logs,
         "retry": retry,

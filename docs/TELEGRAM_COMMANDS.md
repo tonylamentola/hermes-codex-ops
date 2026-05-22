@@ -12,6 +12,8 @@ Telegram is the command center and notification surface.
 - `/projects`: active project memory
 - `/deployments`: deployment history
 - `/tasks`: recent tasks
+- `/task TASK_ID`: show status, result preview, backend, and reported artifacts
+- `/artifacts TASK_ID`: send reported artifact files/images when they exist on the VPS
 - `/stalled`: stalled tasks
 - `/logs`: recent audit log entries
 - `/retry TASK_ID`: requeue a task and increment retry count
@@ -31,3 +33,5 @@ Set `TELEGRAM_ALLOWED_CHAT_IDS` in `.env` to restrict command access. Use a comm
 Watcher and worker notifications are sent with Telegram's HTTP API when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_IDS` are configured. If either value is missing, the notification attempt is logged as skipped in JSONL instead of failing the watcher.
 
 Tasks created from plain Telegram text include the originating chat ID in the task payload. Worker updates for those tasks are sent back to that chat when the task starts, completes, fails, retries, or needs approval. Full task IDs remain available for recovery, but the normal mobile flow should use buttons or short text replies.
+
+Completed tasks store a `worker_context` result preview and an `artifacts` list in the task payload. The worker extracts artifact paths from backend output, marks whether each file exists, and sends up to three existing image artifacts back to Telegram automatically. Use `/artifacts TASK_ID` to resend available files.

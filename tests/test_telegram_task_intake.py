@@ -1,5 +1,5 @@
 from system.services.queue import Task
-from system.services.worker import short_task_id, task_chat_ids
+from system.services.worker import artifact_summary, extract_artifacts, short_task_id, task_chat_ids
 from system.telegram.bot import _details_text, _task_ack, _task_keyboard, _task_matches_chat
 
 
@@ -55,8 +55,48 @@ def test_task_keyboard_exposes_approve_cancel_details() -> None:
 
 
 def test_details_text_is_short_and_readable() -> None:
-    text = _details_text(make_task({}))
+    text = _details_text(
+        make_task(
+            {
+                "backend": "dry-run",
+                "worker_context": "Result text",
+                "artifacts": [
+                    {
+                        "display_path": "shirts/new-shirt.png",
+                        "path": "/tmp/new-shirt.png",
+                        "exists": False,
+                        "kind": "image",
+                    }
+                ],
+            }
+        )
+    )
 
     assert "Task 12345678" in text
     assert "Status: pending" in text
     assert "Do the thing" in text
+    assert "Backend: dry-run" in text
+    assert "missing: shirts/new-shirt.png" in text
+    assert "Result preview" in text
+
+
+def test_extract_artifacts_finds_relative_and_absolute_paths(tmp_path) -> None:
+    image = tmp_path / "out" / "shirt.png"
+    image.parent.mkdir()
+    image.write_bytes(b"png")
+
+    artifacts = extract_artifacts(
+        f"Created `{image}` and `assets/missing-shirt.webp`.",
+        root=tmp_path,
+    )
+
+    assert artifacts[0]["path"] == str(image)
+    assert artifacts[0]["exists"] is True
+    assert artifacts[0]["kind"] == "image"
+    assert any(item["display_path"] == "assets/missing-shirt.webp" for item in artifacts)
+
+
+def test_artifact_summary_reports_none_and_paths() -> None:
+    assert artifact_summary([]) == "Artifacts: none reported."
+    text = artifact_summary([{"display_path": "shirt.png", "exists": True}])
+    assert "ok: shirt.png" in text

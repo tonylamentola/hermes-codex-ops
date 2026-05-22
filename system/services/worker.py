@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from system.hermes.coordinator import HermesCoordinator
 from system.services.ai_backend import CodexBackend, CodexCliBackend, DryRunBackend
@@ -11,6 +14,9 @@ from system.services.memory import MemoryStore
 from system.services.notifier import TelegramNotifier
 from system.services.queue import Task, TaskQueue
 from system.services.settings import settings
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+ARTIFACT_EXTENSIONS = IMAGE_EXTENSIONS | {".svg", ".pdf", ".zip", ".json", ".md", ".txt"}
 
 
 def choose_backend():
@@ -36,6 +42,48 @@ def task_chat_ids(task: Task) -> set[int] | None:
 
 def short_task_id(task: Task) -> str:
     return task.id[:8]
+
+
+def extract_artifacts(text: str, *, root: Path | None = None) -> list[dict[str, Any]]:
+    root = root or settings.root
+    candidates = set()
+    candidates.update(re.findall(r"`([^`]+)`", text))
+    candidates.update(re.findall(r"(/[A-Za-z0-9._~:/?#@!$&'()*+,;=% -]+)", text))
+    candidates.update(re.findall(r"([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_. -]+)+)", text))
+
+    artifacts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        candidate = raw.strip().strip(".,:;)")
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.suffix.lower() not in ARTIFACT_EXTENSIONS:
+            continue
+        resolved = path if path.is_absolute() else root / path
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        artifacts.append(
+            {
+                "path": str(resolved),
+                "display_path": candidate,
+                "exists": resolved.exists(),
+                "kind": "image" if resolved.suffix.lower() in IMAGE_EXTENSIONS else "file",
+            }
+        )
+    return sorted(artifacts, key=lambda item: (not item["exists"], item["path"]))
+
+
+def artifact_summary(artifacts: list[dict[str, Any]]) -> str:
+    if not artifacts:
+        return "Artifacts: none reported."
+    lines = ["Artifacts:"]
+    for artifact in artifacts[:8]:
+        marker = "ok" if artifact["exists"] else "missing"
+        lines.append(f"- {marker}: {artifact['display_path']}")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -95,6 +143,7 @@ class Worker:
             payload = dict(task.payload)
             payload["worker_context"] = worker_context
             payload["backend"] = self.hermes.backend.name
+            payload["artifacts"] = extract_artifacts(worker_context)
             self.queue.update_payload(task.id, payload)
             completed = self.queue.update_status(task.id, "completed")
             self.memory.append_markdown(
@@ -103,10 +152,22 @@ class Worker:
                 f"- Task: `{completed.id}`\n- Summary: {completed.summary}\n- Backend: {self.hermes.backend.name}\n\n{worker_context[:2000]}",
             )
             self.audit.write(agent="worker", action="complete", result="ok", task_id=task.id)
+            completion_message = (
+                f"Task completed: {short_task_id(completed)}\n{completed.summary}\n\n"
+                f"{artifact_summary(completed.payload.get('artifacts', []))}\n\n"
+                f"Use /task {completed.id} for details."
+            )
             await self.notifier.send(
-                f"Task completed: {short_task_id(completed)}\n{completed.summary}",
+                completion_message,
                 chat_ids=task_chat_ids(completed),
             )
+            for artifact in completed.payload.get("artifacts", [])[:3]:
+                if artifact.get("exists") and artifact.get("kind") == "image":
+                    await self.notifier.send_file(
+                        artifact["path"],
+                        caption=f"Artifact for {short_task_id(completed)}: {artifact['display_path']}",
+                        chat_ids=task_chat_ids(completed),
+                    )
             return completed
         except Exception as exc:
             fresh = self.queue.get(task.id)
