@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from system.hermes.coordinator import HERMES_SYSTEM_PROMPT, HermesCoordinator
@@ -99,10 +99,10 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
     }
 
 
-@app.post("/v1/chat/completions")
+@app.post("/v1/chat/completions", response_model=None)
 async def chat_completions(
     request: ChatCompletionRequest, authorization: str | None = Header(default=None)
-) -> JSONResponse | StreamingResponse:
+) -> Response:
     await _authorize(authorization)
     system, prompt = _prompt_from_messages(request.messages)
     if not prompt:
