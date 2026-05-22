@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import time
+import json
+from collections.abc import Iterable
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from system.hermes.coordinator import HERMES_SYSTEM_PROMPT, HermesCoordinator
@@ -100,10 +102,8 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
 @app.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest, authorization: str | None = Header(default=None)
-) -> JSONResponse:
+) -> JSONResponse | StreamingResponse:
     await _authorize(authorization)
-    if request.stream:
-        raise HTTPException(status_code=400, detail="Streaming is not enabled for this adapter yet")
     system, prompt = _prompt_from_messages(request.messages)
     if not prompt:
         prompt = "Report Hermes operational status."
@@ -118,19 +118,55 @@ async def chat_completions(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     audit.write(agent="open-webui-adapter", action="chat_completion", result="ok", model=request.model)
     now = int(time.time())
-    return JSONResponse(
-        {
-            "id": f"chatcmpl-hermes-{now}",
-            "object": "chat.completion",
+    if request.stream:
+        return StreamingResponse(_stream_events(response, now), media_type="text/event-stream")
+    return JSONResponse(_completion_payload(response, now))
+
+
+def _completion_payload(response: str, now: int) -> dict[str, Any]:
+    return {
+        "id": f"chatcmpl-hermes-{now}",
+        "object": "chat.completion",
+        "created": now,
+        "model": MODEL_ID,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": response},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+
+
+def _stream_events(response: str, now: int) -> Iterable[str]:
+    completion_id = f"chatcmpl-hermes-{now}"
+    first_chunk = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": now,
+        "model": MODEL_ID,
+        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+    }
+    yield f"data: {json.dumps(first_chunk)}\n\n"
+
+    if response:
+        content_chunk = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
             "created": now,
             "model": MODEL_ID,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": response},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "choices": [{"index": 0, "delta": {"content": response}, "finish_reason": None}],
         }
-    )
+        yield f"data: {json.dumps(content_chunk)}\n\n"
+
+    final_chunk = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": now,
+        "model": MODEL_ID,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    }
+    yield f"data: {json.dumps(final_chunk)}\n\n"
+    yield "data: [DONE]\n\n"
