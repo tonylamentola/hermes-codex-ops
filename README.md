@@ -38,6 +38,13 @@ bash system/scripts/bootstrap_ubuntu.sh
 python -m system.scripts.healthcheck
 ```
 
+Catch Hermes up on existing Codex work:
+
+```bash
+python -m system.scripts.sync_codex_jobs
+python -m system.services.memory_compressor
+```
+
 ## Operating Model
 
 1. Telegram receives commands and notifications.
@@ -61,6 +68,7 @@ python -m system.scripts.healthcheck
 - Durable worker loop
 - Real Telegram notifier service
 - Memory compression and context packs
+- Codex job tracker sync into durable memory
 - Operator pause/resume/cancel/approval controls
 - VPS bootstrap and health-check scripts
 - Recovery-focused documentation

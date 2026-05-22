@@ -11,6 +11,7 @@ Memory must be persistent, inspectable, and portable.
 - `memory/summaries/handoffs.md`
 - `memory/summaries/context-pack.md`
 - `memory/summaries/context-pack.json`
+- `memory/projects/codex-jobs.json`
 
 ## Rules
 
@@ -37,6 +38,25 @@ Raw memory files are not deleted or rewritten. The generated outputs are:
 
 - `memory/summaries/context-pack.md`
 - `memory/summaries/context-pack.json`
+
+## Codex Job Sync
+
+Hermes can be caught up on existing Codex work by importing the central Codex job tracker into durable memory:
+
+```bash
+python -m system.scripts.sync_codex_jobs
+python -m system.services.memory_compressor
+```
+
+The source defaults to `CODEX_JOBS_PATH`, or `/Users/anthonylamentola/cued/telegram-codex-bridge/jobs.json` when unset. The sync imports only jobs whose status is not `completed`.
+
+Outputs:
+
+- Appends a timestamped summary to `memory/active-projects.md`
+- Writes structured state to `memory/projects/codex-jobs.json`
+- Logs the sync to `logs/ops.jsonl`
+
+This is intentionally deterministic and human-readable. It does not import full chat transcripts, hidden state, or opaque memory blobs.
 
 ## Recovery
 

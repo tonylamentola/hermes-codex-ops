@@ -38,6 +38,9 @@ class Settings:
     github_token: str = os.getenv("GITHUB_TOKEN", "")
     github_owner: str = os.getenv("GITHUB_OWNER", "")
     hermes_api_key: str = os.getenv("HERMES_API_KEY", "")
+    codex_jobs_path: str = os.getenv(
+        "CODEX_JOBS_PATH", "/Users/anthonylamentola/cued/telegram-codex-bridge/jobs.json"
+    )
 
     @property
     def allowed_chat_ids(self) -> set[int]:
