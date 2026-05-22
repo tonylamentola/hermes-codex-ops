@@ -64,8 +64,6 @@ class CodexCliBackend:
             "--skip-git-repo-check",
             "--sandbox",
             settings.codex_cli_sandbox,
-            "--ask-for-approval",
-            "never",
             "--model",
             settings.codex_cli_model,
             "-",
