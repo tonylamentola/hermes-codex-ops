@@ -1,6 +1,13 @@
 from system.services.queue import Task
 from system.services.worker import artifact_summary, extract_artifacts, short_task_id, task_chat_ids
-from system.telegram.bot import _details_text, _task_ack, _task_keyboard, _task_matches_chat
+from system.telegram.bot import (
+    _details_text,
+    _help_text,
+    _is_control_summary,
+    _task_ack,
+    _task_keyboard,
+    _task_matches_chat,
+)
 
 
 def make_task(payload: dict) -> Task:
@@ -100,3 +107,18 @@ def test_artifact_summary_reports_none_and_paths() -> None:
     assert artifact_summary([]) == "Artifacts: none reported."
     text = artifact_summary([{"display_path": "shirt.png", "exists": True}])
     assert "ok: shirt.png" in text
+
+
+def test_control_summaries_are_not_real_tasks() -> None:
+    assert _is_control_summary("Approve")
+    assert _is_control_summary("approved")
+    assert _is_control_summary("what's the task")
+    assert _is_control_summary("status")
+    assert not _is_control_summary("Generate a new shirt in cotton club")
+
+
+def test_help_text_explains_natural_controls() -> None:
+    text = _help_text()
+
+    assert "approve / yes / go ahead" in text
+    assert "tasks or what's the task" in text

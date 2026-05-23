@@ -24,6 +24,22 @@ hermes = HermesCoordinator.create()
 control = ControlState.create()
 APPROVE_WORDS = {"approve", "approved", "yes", "y", "run", "run it", "go", "go ahead", "do it"}
 CANCEL_WORDS = {"cancel", "stop", "no", "never mind", "nevermind"}
+TASK_QUERY_WORDS = {
+    "task",
+    "tasks",
+    "what task",
+    "what's the task",
+    "whats the task",
+    "what is the task",
+    "what are the tasks",
+    "what's pending",
+    "whats pending",
+    "pending",
+    "queue",
+}
+HELP_WORDS = {"help", "commands", "what can you do"}
+STATUS_WORDS = {"status", "system status", "queue status"}
+CONTROL_SUMMARIES = APPROVE_WORDS | CANCEL_WORDS | TASK_QUERY_WORDS | HELP_WORDS | STATUS_WORDS
 
 
 def _authorized(update: Update) -> bool:
@@ -49,6 +65,13 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     control_state = control.read()
     await update.message.reply_text(f"Queue: {data['queue']}\nPaused: {control_state.get('paused')} {control_state.get('reason', '')}")
     audit.write(agent="telegram", action="/status", result="ok")
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update):
+        return
+    await update.message.reply_text(_help_text())
+    audit.write(agent="telegram", action="/help", result="ok")
 
 
 async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -115,11 +138,53 @@ def _task_matches_chat(task: Task, chat_id: int) -> bool:
         return False
 
 
-def _latest_chat_task(chat_id: int) -> Task | None:
+def _is_control_summary(summary: str) -> bool:
+    return summary.strip().lower() in CONTROL_SUMMARIES
+
+
+def _latest_chat_task(chat_id: int, *, include_control_tasks: bool = False) -> Task | None:
     for task in queue.list(limit=100):
-        if _task_matches_chat(task, chat_id) and task.status in {"pending", "awaiting_approval", "active"}:
-            return task
+        if not _task_matches_chat(task, chat_id):
+            continue
+        if task.status not in {"pending", "awaiting_approval", "active"}:
+            continue
+        if not include_control_tasks and _is_control_summary(task.summary):
+            continue
+        return task
     return None
+
+
+def _chat_tasks(chat_id: int, *, limit: int = 6) -> list[Task]:
+    tasks = []
+    for task in queue.list(limit=200):
+        if _task_matches_chat(task, chat_id) and not _is_control_summary(task.summary):
+            tasks.append(task)
+        if len(tasks) >= limit:
+            break
+    return tasks
+
+
+def _tasks_overview(chat_id: int) -> str:
+    tasks = _chat_tasks(chat_id)
+    if not tasks:
+        return "I do not see any real tasks from this chat yet. Send me the work you want done in one message."
+    lines = ["Recent tasks:"]
+    for task in tasks:
+        lines.append(f"- {task.id[:8]} [{task.status}] {task.summary}")
+    lines.append("\nReply approve to run the latest waiting task, or cancel to cancel it.")
+    return "\n".join(lines)
+
+
+def _help_text() -> str:
+    return (
+        "Send me a normal message to create a durable Hermes task.\n\n"
+        "Natural controls:\n"
+        "- approve / yes / go ahead: run the latest waiting task\n"
+        "- cancel / stop: cancel the latest waiting task\n"
+        "- status: queue status\n"
+        "- tasks or what's the task: recent tasks\n\n"
+        "Commands: /status, /tasks, /task TASK_ID, /approve TASK_ID, /cancel TASK_ID, /logs, /memory"
+    )
 
 
 def _approve_task(task_id: str, *, approved_by: str) -> Task:
@@ -204,6 +269,22 @@ async def plain_text_task(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not summary:
         return
     normalized = summary.lower()
+    if normalized in HELP_WORDS:
+        await update.message.reply_text(_help_text())
+        audit.write(agent="telegram", action="plain_text_help", result="ok")
+        return
+    if normalized in STATUS_WORDS:
+        data = hermes.status()
+        control_state = control.read()
+        await update.message.reply_text(
+            f"Queue: {data['queue']}\nPaused: {control_state.get('paused')} {control_state.get('reason', '')}"
+        )
+        audit.write(agent="telegram", action="plain_text_status", result="ok")
+        return
+    if normalized in TASK_QUERY_WORDS:
+        await update.message.reply_text(_tasks_overview(update.effective_chat.id))
+        audit.write(agent="telegram", action="plain_text_tasks", result="ok")
+        return
     if normalized in APPROVE_WORDS or normalized in CANCEL_WORDS:
         task = _latest_chat_task(update.effective_chat.id)
         if not task:
@@ -398,6 +479,8 @@ def build_app() -> Application:
     app = Application.builder().token(settings.telegram_bot_token).build()
     for name, handler in {
         "status": status,
+        "start": help_cmd,
+        "help": help_cmd,
         "submit": submit,
         "projects": projects,
         "deployments": deployments,
