@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from system.hermes.coordinator import HERMES_SYSTEM_PROMPT, HermesCoordinator
 from system.services.ai_backend import CodexBackend, CodexCliBackend, DryRunBackend
 from system.services.audit_log import AuditLog
+from system.services.context_router import ContextRouter, context_packet_to_markdown
 from system.services.memory import MemoryStore
 from system.services.settings import settings
 
@@ -70,6 +71,12 @@ class DashboardChatRequest(BaseModel):
     chatKey: str | None = None
     model: str | None = None
     context: dict[str, Any] | None = None
+
+
+class ContextResolveRequest(BaseModel):
+    secret: str | None = None
+    request: str
+    projectId: str | None = None
 
 
 def _backend():
@@ -136,6 +143,15 @@ def _system_with_memory(system: str, memory_context: str) -> str:
     return f"{system.strip()}\n\n{memory_context}".strip()
 
 
+def _system_with_context(system: str, memory_context: str, route_context: str) -> str:
+    parts = [system.strip()]
+    if memory_context:
+        parts.append(memory_context)
+    if route_context:
+        parts.append(route_context)
+    return "\n\n".join(part for part in parts if part).strip()
+
+
 async def _authorize(authorization: str | None) -> None:
     expected = getattr(settings, "hermes_api_key", "")
     if not expected:
@@ -160,7 +176,7 @@ def _dashboard_priority(priority: str) -> int:
 
 
 def _task_payload(task: DashboardTask, project: DashboardProject, request: DashboardTaskSubmitRequest) -> dict[str, Any]:
-    return {
+    payload = {
         "source": "vercel-command-center",
         "approved": True,
         "dashboard": {
@@ -175,6 +191,16 @@ def _task_payload(task: DashboardTask, project: DashboardProject, request: Dashb
         "instructions": task.instructions or task.text,
         "design_template_context": request.designTemplateContext or {},
     }
+    text = f"{project.name} {project.description} {task.text} {task.instructions or ''}".lower()
+    if any(word in text for word in ("lead", "leads", "flyer", "outreach", "email", "facebook")):
+        payload["artifacts"] = [
+            {"display_path": "artifacts/leads/<task_id>-leads.json"},
+            {"display_path": "artifacts/leads/<task_id>-summary.md"},
+            {"display_path": "artifacts/outreach/<task_id>-drafts.json"},
+        ]
+        if "flyer" in text:
+            payload["artifacts"].append({"display_path": "artifacts/flyers/<task_id>-preview.png"})
+    return payload
 
 
 @app.get("/health")
@@ -223,6 +249,11 @@ async def dashboard_chat(request: DashboardChatRequest) -> dict[str, Any]:
     audit = AuditLog()
     hermes = HermesCoordinator.create(backend=_backend())
     memory_context = _webui_memory_context(hermes.memory)
+    route_packet = ContextRouter(memory=hermes.memory, audit=audit).resolve(
+        request.message,
+        project_id=request.projectId,
+    )
+    route_context = context_packet_to_markdown(route_packet)
     context = json.dumps(request.context or {}, indent=2, sort_keys=True)
     prompt = (
         f"Dashboard project id: {request.projectId or 'none'}\n"
@@ -232,12 +263,22 @@ async def dashboard_chat(request: DashboardChatRequest) -> dict[str, Any]:
     )
     audit.write(agent="dashboard-webhook", action="chat", result="started", project_id=request.projectId)
     try:
-        reply = await hermes.backend.complete(prompt, system=_system_with_memory(HERMES_SYSTEM_PROMPT, memory_context))
+        reply = await hermes.backend.complete(prompt, system=_system_with_context(HERMES_SYSTEM_PROMPT, memory_context, route_context))
     except Exception as exc:
         audit.write(agent="dashboard-webhook", action="chat", result="failed", error=str(exc), project_id=request.projectId)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     audit.write(agent="dashboard-webhook", action="chat", result="ok", project_id=request.projectId)
     return {"ok": True, "reply": reply, "historyLength": 0, "source": "hermes"}
+
+
+@app.post("/context/resolve")
+async def context_resolve(request: ContextResolveRequest) -> dict[str, Any]:
+    _authorize_dashboard(request.secret)
+    packet = ContextRouter(memory=MemoryStore(), audit=AuditLog()).resolve(
+        request.request,
+        project_id=request.projectId,
+    )
+    return {"ok": True, "context": packet}
 
 
 @app.get("/v1/models")
@@ -270,7 +311,9 @@ async def chat_completions(
     audit.write(agent="open-webui-adapter", action="chat_completion", result="started", model=request.model)
     try:
         memory_context = _webui_memory_context(hermes.memory)
-        response = await hermes.backend.complete(prompt, system=_system_with_memory(system, memory_context))
+        route_packet = ContextRouter(memory=hermes.memory, audit=audit).resolve(prompt)
+        route_context = context_packet_to_markdown(route_packet)
+        response = await hermes.backend.complete(prompt, system=_system_with_context(system, memory_context, route_context))
     except Exception as exc:
         audit.write(agent="open-webui-adapter", action="chat_completion", result="failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from system.services.ai_backend import AIBackend, DryRunBackend
 from system.services.audit_log import AuditLog
+from system.services.context_router import ContextRouter, context_packet_to_markdown
 from system.services.memory import MemoryStore
 from system.services.queue import Task, TaskQueue
 from system.services.settings import settings
@@ -20,7 +21,9 @@ For outreach, niche research, flyer concepts, website concepts, lead previews, a
 - Treat Hermes as coordinator/router/supervisor, not as the owner of permanent template state.
 - Preserve the review flow: gather/research, generate concepts, prepare previews, wait for approval, then execute/send/track.
 - Do not create one-off hidden templates. Save reusable template decisions in human-readable files or dashboard state.
-- If a needed niche template is missing, create a follow-up task to add it instead of improvising silently."""
+- If a needed niche template is missing, create a follow-up task to add it instead of improvising silently.
+
+For every meaningful task, resolve project/domain context before dispatching. Never mix outreach/email context into game-dev tasks, and never mix game asset context into outreach tasks."""
 
 
 NICHE_ALIASES = {
@@ -137,6 +140,13 @@ class HermesCoordinator:
                 self.memory.read_markdown("agent-status.md"),
             ]
         )
+        route_packet = ContextRouter(memory=self.memory, audit=self.audit).resolve(
+            f"{task.summary}\n{json.dumps(task.payload, sort_keys=True)}",
+            project_id=(task.payload.get("dashboard") or {}).get("project_id")
+            if isinstance(task.payload.get("dashboard"), dict)
+            else None,
+        )
+        route_context = context_packet_to_markdown(route_packet)
         design_context = task.payload.get("design_template_context") or _repo_design_template_context(task)
         if isinstance(design_context, dict):
             design_body = str(design_context.get("body") or "").strip()
@@ -152,6 +162,7 @@ class HermesCoordinator:
                         f"{design_body}",
                     ]
                 )
+        relevant_memory = "\n\n".join([relevant_memory, route_context])
         context = (
             "WORKER_CONTEXT\n\n"
             f"Task ID: {task.id}\n"

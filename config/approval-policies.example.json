@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "projects": {
+    "outreach-dashboard": {
+      "autoResearch": true,
+      "autoGeneratePreviews": true,
+      "autoSendEmail": false,
+      "autoSendFacebook": false,
+      "requiresApprovalForSend": true,
+      "requiresApprovalForDeploy": true
+    },
+    "light-bringers": {
+      "autoResearch": true,
+      "autoGeneratePreviews": true,
+      "autoSendEmail": false,
+      "autoSendFacebook": false,
+      "requiresApprovalForSend": true,
+      "requiresApprovalForDeploy": true
+    }
+  }
+}

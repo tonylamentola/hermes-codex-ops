@@ -18,6 +18,7 @@ from typing import Any
 
 from system.hermes.coordinator import HERMES_SYSTEM_PROMPT, HermesCoordinator
 from system.services.audit_log import AuditLog
+from system.services.context_router import ContextRouter, context_packet_to_markdown
 from system.services.memory import MemoryStore
 from system.services.queue import TaskQueue
 
@@ -120,6 +121,8 @@ def _build_user_prompt(
     active = _memory_snippet(memory, _ACTIVE_PROJECTS_NAME, max_chars=1200)
     if active:
         parts.extend(["", "--- Active projects ---", active])
+    route_packet = ContextRouter(memory=memory, audit=audit).resolve(user_text)
+    parts.extend(["", "--- Hermes project/domain context ---", context_packet_to_markdown(route_packet)])
     parts.extend([
         "",
         "Reply to the operator conversationally now.",

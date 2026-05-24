@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 
 from system.hermes.coordinator import HermesCoordinator
+from system.services.context_router import ContextRouter, context_packet_to_markdown
 from system.services.audit_log import AuditLog
 from system.services.memory import MemoryStore
 from system.services.queue import TaskQueue
@@ -18,6 +20,10 @@ async def main() -> None:
     sub.add_parser("status")
     context = sub.add_parser("context")
     context.add_argument("task_id")
+    resolve = sub.add_parser("resolve")
+    resolve.add_argument("request")
+    resolve.add_argument("--project-id", default=None)
+    resolve.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     hermes = HermesCoordinator.create()
@@ -31,6 +37,9 @@ async def main() -> None:
         print(hermes.status())
     elif args.command == "context":
         print(await hermes.prepare_worker_context(args.task_id))
+    elif args.command == "resolve":
+        packet = ContextRouter(memory=MemoryStore(), audit=AuditLog()).resolve(args.request, project_id=args.project_id)
+        print(json.dumps(packet, indent=2, sort_keys=True) if args.json else context_packet_to_markdown(packet))
 
     AuditLog().write(agent="hermes-cli", action=args.command, result="ok")
 

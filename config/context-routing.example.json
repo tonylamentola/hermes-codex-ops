@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "defaultProjectId": "hermes-ops",
+  "projects": [
+    {
+      "id": "hermes-ops",
+      "name": "Hermes Ops",
+      "domain": "ops",
+      "repoCachePath": "repos/hermes-codex-ops",
+      "workspacePath": "/opt/hermes-codex-ops",
+      "aliases": ["hermes", "telegram", "openwebui", "vps", "worker", "watcher", "queue", "memory"],
+      "includeFiles": ["AGENTS.md", "docs/SYSTEM_OVERVIEW.md", "docs/DATA_CONTINUITY.md"],
+      "neverIncludeDomains": []
+    },
+    {
+      "id": "simpleweb",
+      "name": "SimpleWeb",
+      "domain": "website-design",
+      "repoCachePath": "repos/Pomely-native",
+      "workspacePath": "/Users/anthonylamentola/Pomely-native",
+      "aliases": ["website", "homepage", "client site", "simpleweb", "landing page", "home page"],
+      "includeFiles": ["memory/lead-gen-dashboard-blueprint.md", "dashboard/templates/DESIGN.md"],
+      "contextRoots": ["dashboard/templates/niches"],
+      "neverIncludeDomains": ["game-dev"]
+    },
+    {
+      "id": "outreach-dashboard",
+      "name": "Outreach Dashboard",
+      "domain": "outreach",
+      "repoCachePath": "repos/Pomely-native/dashboard",
+      "workspacePath": "/Users/anthonylamentola/Pomely-native/dashboard",
+      "aliases": ["outreach", "lead", "leads", "septic", "portable restroom", "porta potty", "simpleweb", "flyer", "email outreach"],
+      "includeFiles": ["templates/DESIGN.md", "templates/niches/README.md"],
+      "contextRoots": ["templates/niches"],
+      "neverIncludeDomains": ["game-dev"]
+    },
+    {
+      "id": "light-bringers",
+      "name": "Light Bringers",
+      "domain": "game-dev",
+      "repoCachePath": "repos/the-lightbringers",
+      "workspacePath": "/Users/anthonylamentola/dungeon-potion-pit",
+      "aliases": ["light bringers", "lightbringers", "game", "sprite", "combat", "character builder", "dungeon potion pit"],
+      "includeFiles": ["AGENTS.md", "README.md", "DESIGN.md", "ASSET_RULES.md", "GAMEPLAY_RULES.md"],
+      "neverIncludeDomains": ["outreach", "email"]
+    },
+    {
+      "id": "pomely",
+      "name": "Pomely",
+      "domain": "mobile-app",
+      "repoCachePath": "repos/Pomely-native",
+      "workspacePath": "/Users/anthonylamentola/Pomely-native",
+      "aliases": ["pomely", "focus timer", "ios app", "testflight", "expo"],
+      "includeFiles": ["AGENTS.md", "README.md"],
+      "neverIncludeDomains": ["outreach", "game-dev"]
+    }
+  ]
+}
