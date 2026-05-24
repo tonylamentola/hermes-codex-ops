@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 
 from system.services.ai_backend import AIBackend, DryRunBackend
 from system.services.audit_log import AuditLog
 from system.services.memory import MemoryStore
 from system.services.queue import Task, TaskQueue
+from system.services.settings import settings
 
 
 HERMES_SYSTEM_PROMPT = """Hermes coordinates AI operations.
@@ -18,6 +21,86 @@ For outreach, niche research, flyer concepts, website concepts, lead previews, a
 - Preserve the review flow: gather/research, generate concepts, prepare previews, wait for approval, then execute/send/track.
 - Do not create one-off hidden templates. Save reusable template decisions in human-readable files or dashboard state.
 - If a needed niche template is missing, create a follow-up task to add it instead of improvising silently."""
+
+
+NICHE_ALIASES = {
+    "septic": ("septic", "septic tank", "drain field", "sewer line"),
+    "portable-restrooms": ("portable restroom", "portable toilet", "porta potty", "porta john"),
+    "tree-service": ("tree service", "tree company", "tree removal", "arborist", "storm damage"),
+    "landscaping": ("landscaping", "landscaper", "lawn care", "hardscape"),
+    "dumpster-rental": ("dumpster", "roll-off", "roll off", "construction debris"),
+    "grease-trap": ("grease trap", "grease interceptor", "restaurant compliance", "fog compliance"),
+    "estate-sales": ("estate sale", "estate liquidation", "downsizing", "appraisal"),
+}
+
+
+def _read_optional(path: Path, max_chars: int) -> str:
+    try:
+        return path.read_text(encoding="utf-8")[:max_chars]
+    except OSError:
+        return ""
+
+
+def _detect_niches(text: str) -> list[str]:
+    lower = text.lower()
+    return [
+        slug
+        for slug, aliases in NICHE_ALIASES.items()
+        if any(alias in lower for alias in aliases)
+    ]
+
+
+def _template_roots() -> list[Path]:
+    return [
+        settings.root / "repos" / "Pomely-native" / "dashboard" / "templates",
+        Path("/opt/hermes-codex-ops/repos/Pomely-native/dashboard/templates"),
+        Path("/Users/anthonylamentola/Pomely-native/dashboard/templates"),
+    ]
+
+
+def _repo_design_template_context(task: Task) -> dict:
+    haystack = "\n".join(
+        [
+            task.summary,
+            json.dumps(task.payload.get("project", {}), sort_keys=True),
+            json.dumps(task.payload.get("task", {}), sort_keys=True),
+            str(task.payload.get("instructions", "")),
+        ]
+    )
+    niches = _detect_niches(haystack)
+    if "outreach" in haystack.lower() or "simpleweb" in haystack.lower():
+        for slug in ("septic", "portable-restrooms", "dumpster-rental", "grease-trap", "estate-sales"):
+            if slug not in niches:
+                niches.append(slug)
+
+    for root in _template_roots():
+        if not root.exists():
+            continue
+        sections = []
+        global_design = _read_optional(root / "DESIGN.md", 5000)
+        playbook = _read_optional(root / "niches" / "README.md", 3500)
+        if global_design:
+            sections.append(f"# Global Design Rules\n{global_design}")
+        if playbook:
+            sections.append(f"# Niche Template Playbook\n{playbook}")
+        for slug in niches[:4]:
+            niche_root = root / "niches" / slug
+            parts = [
+                _read_optional(niche_root / "DESIGN.md", 2500),
+                _read_optional(niche_root / "SKILL.md", 2500),
+                _read_optional(niche_root / "niche.json", 2000),
+            ]
+            body = "\n\n".join(part for part in parts if part.strip())
+            if body:
+                sections.append(f"## Niche: {slug}\n{body}")
+        if sections:
+            return {
+                "source": "vps-repo-owned-design-templates",
+                "detectedNiches": niches,
+                "templateRoot": str(root),
+                "body": "\n\n---\n\n".join(sections),
+            }
+    return {}
 
 
 @dataclass
@@ -54,7 +137,7 @@ class HermesCoordinator:
                 self.memory.read_markdown("agent-status.md"),
             ]
         )
-        design_context = task.payload.get("design_template_context")
+        design_context = task.payload.get("design_template_context") or _repo_design_template_context(task)
         if isinstance(design_context, dict):
             design_body = str(design_context.get("body") or "").strip()
             detected = design_context.get("detectedNiches") or design_context.get("detected_niches") or []
