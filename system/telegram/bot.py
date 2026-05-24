@@ -8,6 +8,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from system.hermes.coordinator import HermesCoordinator
+from system.hermes.openai_adapter import _backend as _build_ai_backend
+from system.telegram.conversation import chat_with_hermes
 from system.services.audit_log import AuditLog
 from system.services.control_state import ControlState
 from system.services.memory import MemoryStore
@@ -20,7 +22,7 @@ from system.services.worker import artifact_summary
 audit = AuditLog()
 queue = TaskQueue()
 memory = MemoryStore()
-hermes = HermesCoordinator.create()
+hermes = HermesCoordinator.create(backend=_build_ai_backend())
 control = ControlState.create()
 APPROVE_WORDS = {"approve", "approved", "yes", "y", "run", "run it", "go", "go ahead", "do it"}
 CANCEL_WORDS = {"cancel", "stop", "no", "never mind", "nevermind"}
@@ -297,14 +299,86 @@ async def plain_text_task(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         cancelled = _cancel_task(task.id)
         await update.message.reply_text(f"Cancelled: {cancelled.id[:8]}")
         return
-    task = await hermes.submit_task(summary, priority=5, payload=_telegram_payload(update))
-    memory.append_markdown(
-        "active-projects.md",
-        "Telegram task submitted",
-        f"- Task: `{task.id}`\n- Summary: {summary}\n- Chat: `{update.effective_chat.id if update.effective_chat else 'unknown'}`",
-    )
-    await _reply_task_queued(update, task)
-    audit.write(agent="telegram", action="plain_text_task", result="queued", task_id=task.id)
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    explicit_task = False
+    for prefix in ("task:", "queue:", "todo:"):
+        if normalized.startswith(prefix):
+            summary = summary.split(":", 1)[1].strip()
+            explicit_task = True
+            break
+
+    if explicit_task:
+        if not summary:
+            await update.message.reply_text(
+                "Give me something after `task:` -- e.g. `task: deploy the staging build`."
+            )
+            audit.write(agent="telegram", action="plain_text_task", result="empty_prefix")
+            return
+        task = await hermes.submit_task(
+            summary, priority=5, payload=_telegram_payload(update)
+        )
+        memory.append_markdown(
+            "active-projects.md",
+            "Telegram task submitted",
+            f"- Task: `{task.id}`\n- Summary: {summary}\n- Chat: `{chat_id if chat_id is not None else 'unknown'}`",
+        )
+        await _reply_task_queued(update, task)
+        audit.write(
+            agent="telegram", action="plain_text_task", result="queued", task_id=task.id
+        )
+        return
+
+    # Conversational fallback -- route through the Hermes AI backend.
+    try:
+        reply, queue_summary = await chat_with_hermes(
+            hermes,
+            user_text=summary,
+            chat_id=chat_id,
+            audit=audit,
+            memory=memory,
+            queue=queue,
+        )
+    except Exception as exc:  # noqa: BLE001
+        audit.write(
+            agent="telegram",
+            action="conversation",
+            result="error",
+            error=str(exc)[:500],
+            chat_id=chat_id,
+        )
+        await update.message.reply_text(
+            "Hermes hit a backend error trying to reply. Try again in a moment, "
+            "or say `task: <thing>` to force a durable task.\n\nError: "
+            f"{type(exc).__name__}: {str(exc)[:300]}"
+        )
+        return
+
+    if queue_summary:
+        task = await hermes.submit_task(
+            queue_summary, priority=5, payload=_telegram_payload(update)
+        )
+        memory.append_markdown(
+            "active-projects.md",
+            "Telegram task submitted (via conversation)",
+            f"- Task: `{task.id}`\n- Summary: {queue_summary}\n- Chat: `{chat_id if chat_id is not None else 'unknown'}`",
+        )
+        reply = (
+            (reply + "\n\n" if reply else "")
+            + f"(Queued task {task.id[:8]}: {queue_summary})"
+        )
+        audit.write(
+            agent="telegram",
+            action="conversation",
+            result="queued",
+            task_id=task.id,
+            chat_id=chat_id,
+        )
+        await _reply_task_queued(update, task)
+    else:
+        audit.write(
+            agent="telegram", action="conversation", result="ok", chat_id=chat_id
+        )
+        await update.message.reply_text(reply[:4000])
 
 
 async def task_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
