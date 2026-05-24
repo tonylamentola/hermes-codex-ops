@@ -7,6 +7,7 @@ from system.services.config import dump_repository_state, load_repositories
 from system.services.github import GitHubService
 from system.services.memory import MemoryStore
 from system.services.settings import settings
+from system.scripts.sync_repo_cache import sync_repo
 from system.watchers.common import notify_telegram_async
 
 
@@ -24,17 +25,19 @@ async def run() -> None:
     service = GitHubService(audit)
     states = []
     failures = []
+    cache_states = []
     for repo in repos:
         try:
             metadata = await service.repository(repo.owner, repo.name)
-            branch = await service.branch(repo.owner, repo.name, repo.default_branch)
-            commits = await service.latest_commits(repo.owner, repo.name, repo.default_branch)
+            branch_name = metadata.get("default_branch") or repo.default_branch
+            branch = await service.branch(repo.owner, repo.name, branch_name)
+            commits = await service.latest_commits(repo.owner, repo.name, branch_name)
             latest = commits[0] if commits else {}
             commit = latest.get("commit", {})
             states.append(
                 {
                     "slug": repo.slug,
-                    "default_branch": repo.default_branch,
+                    "default_branch": branch_name,
                     "private": metadata.get("private", False),
                     "open_issues": metadata.get("open_issues_count", 0),
                     "pushed_at": metadata.get("pushed_at", ""),
@@ -45,6 +48,7 @@ async def run() -> None:
                     "latest_commit_date": commit.get("author", {}).get("date", "") if commit else "",
                 }
             )
+            cache_states.append(sync_repo(repo))
         except Exception as exc:
             failures.append({"slug": repo.slug, "error": str(exc)})
 
@@ -69,6 +73,7 @@ async def run() -> None:
         result="failed" if failures and not states else "ok",
         repositories=len(states),
         failures=len(failures),
+        cache_updates=len(cache_states),
     )
 
 
