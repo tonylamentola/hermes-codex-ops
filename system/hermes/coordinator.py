@@ -10,7 +10,14 @@ from system.services.queue import Task, TaskQueue
 
 HERMES_SYSTEM_PROMPT = """Hermes coordinates AI operations.
 Use durable memory, task, and log systems as the source of truth.
-Inject only relevant context. Return concise, auditable worker instructions."""
+Inject only relevant context. Return concise, auditable worker instructions.
+
+For outreach, niche research, flyer concepts, website concepts, lead previews, and visual-template work:
+- Use repo-owned DESIGN.md, SKILL.md, and niche.json context when it is present.
+- Treat Hermes as coordinator/router/supervisor, not as the owner of permanent template state.
+- Preserve the review flow: gather/research, generate concepts, prepare previews, wait for approval, then execute/send/track.
+- Do not create one-off hidden templates. Save reusable template decisions in human-readable files or dashboard state.
+- If a needed niche template is missing, create a follow-up task to add it instead of improvising silently."""
 
 
 @dataclass
@@ -47,8 +54,28 @@ class HermesCoordinator:
                 self.memory.read_markdown("agent-status.md"),
             ]
         )
-        prompt = f"Task:\n{task.summary}\n\nPayload:\n{task.payload}\n\nRelevant memory:\n{relevant_memory}"
-        context = await self.backend.complete(prompt, system=HERMES_SYSTEM_PROMPT)
+        design_context = task.payload.get("design_template_context")
+        if isinstance(design_context, dict):
+            design_body = str(design_context.get("body") or "").strip()
+            detected = design_context.get("detectedNiches") or design_context.get("detected_niches") or []
+            if design_body:
+                relevant_memory = "\n\n".join(
+                    [
+                        relevant_memory,
+                        "REPO_OWNED_DESIGN_TEMPLATE_CONTEXT\n"
+                        f"Detected niches: {detected}\n"
+                        "Use this context for outreach/niche/flyer/website/template tasks. "
+                        "Do not treat it as permanent Hermes memory; it belongs to the project repo/dashboard.\n\n"
+                        f"{design_body}",
+                    ]
+                )
+        context = (
+            "WORKER_CONTEXT\n\n"
+            f"Task ID: {task.id}\n"
+            f"Task summary: {task.summary}\n\n"
+            f"Payload:\n{task.payload}\n\n"
+            f"Relevant durable memory:\n{relevant_memory}"
+        )
         self.audit.write(agent="hermes", action="prepare_worker_context", result="ok", task_id=task.id)
         return context
 

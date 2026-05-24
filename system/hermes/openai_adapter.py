@@ -32,6 +32,46 @@ class ChatCompletionRequest(BaseModel):
     temperature: float | None = None
 
 
+class DashboardTask(BaseModel):
+    id: str
+    text: str
+    priority: str = "green"
+    status: str = "queued"
+    createdAt: str | None = None
+    instructions: str | None = None
+    estimatedCost: float | None = None
+
+
+class DashboardProject(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    status: str | None = None
+    buildInfo: dict[str, Any] = Field(default_factory=dict)
+    todos: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    notes: list[dict[str, Any]] = Field(default_factory=list)
+    codex: dict[str, Any] | None = None
+
+
+class DashboardTaskSubmitRequest(BaseModel):
+    secret: str | None = None
+    tasks: list[DashboardTask] = Field(default_factory=list)
+    project: DashboardProject
+    designTemplateContext: dict[str, Any] | None = None
+    callbackUrl: str
+    callbackSecret: str | None = None
+
+
+class DashboardChatRequest(BaseModel):
+    secret: str | None = None
+    message: str
+    projectId: str | None = None
+    chatKey: str | None = None
+    model: str | None = None
+    context: dict[str, Any] | None = None
+
+
 def _backend():
     if settings.worker_backend in {"codex-api", "codex"}:
         return CodexBackend()
@@ -104,9 +144,100 @@ async def _authorize(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="Invalid Hermes API key")
 
 
+def _authorize_dashboard(secret: str | None) -> None:
+    expected = getattr(settings, "dashboard_webhook_secret", "")
+    if expected and secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid dashboard webhook secret")
+
+
+def _dashboard_priority(priority: str) -> int:
+    return {
+        "red": 100,
+        "yellow": 75,
+        "green": 50,
+        "gray": 10,
+    }.get(priority, 50)
+
+
+def _task_payload(task: DashboardTask, project: DashboardProject, request: DashboardTaskSubmitRequest) -> dict[str, Any]:
+    return {
+        "source": "vercel-command-center",
+        "approved": True,
+        "dashboard": {
+            "project_id": project.id,
+            "project_name": project.name,
+            "task_id": task.id,
+            "callback_url": request.callbackUrl,
+            "callback_secret": request.callbackSecret,
+        },
+        "project": project.model_dump(),
+        "task": task.model_dump(),
+        "instructions": task.instructions or task.text,
+        "design_template_context": request.designTemplateContext or {},
+    }
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "model": MODEL_ID}
+
+
+@app.post("/dashboard/tasks")
+async def dashboard_tasks(request: DashboardTaskSubmitRequest) -> dict[str, Any]:
+    _authorize_dashboard(request.secret)
+    if not request.tasks:
+        raise HTTPException(status_code=400, detail="No tasks supplied")
+    if not request.callbackUrl:
+        raise HTTPException(status_code=400, detail="callbackUrl is required")
+
+    audit = AuditLog()
+    hermes = HermesCoordinator.create(backend=_backend())
+    created = []
+    for task in request.tasks:
+        summary = f"{request.project.name}: {task.text}"
+        queued = await hermes.submit_task(
+            summary,
+            priority=_dashboard_priority(task.priority),
+            payload=_task_payload(task, request.project, request),
+        )
+        created.append(
+            {
+                "dashboardTaskId": task.id,
+                "hermesTaskId": queued.id,
+                "status": queued.status,
+            }
+        )
+    audit.write(
+        agent="dashboard-webhook",
+        action="submit_tasks",
+        result="queued",
+        project_id=request.project.id,
+        task_count=len(created),
+    )
+    return {"ok": True, "queued": created}
+
+
+@app.post("/dashboard/chat")
+async def dashboard_chat(request: DashboardChatRequest) -> dict[str, Any]:
+    _authorize_dashboard(request.secret)
+    audit = AuditLog()
+    hermes = HermesCoordinator.create(backend=_backend())
+    memory_context = _webui_memory_context(hermes.memory)
+    context = json.dumps(request.context or {}, indent=2, sort_keys=True)
+    prompt = (
+        f"Dashboard project id: {request.projectId or 'none'}\n"
+        f"Dashboard chat key: {request.chatKey or 'none'}\n"
+        f"Context:\n{context}\n\n"
+        f"User message:\n{request.message}"
+    )
+    audit.write(agent="dashboard-webhook", action="chat", result="started", project_id=request.projectId)
+    try:
+        reply = await hermes.backend.complete(prompt, system=_system_with_memory(HERMES_SYSTEM_PROMPT, memory_context))
+    except Exception as exc:
+        audit.write(agent="dashboard-webhook", action="chat", result="failed", error=str(exc), project_id=request.projectId)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    audit.write(agent="dashboard-webhook", action="chat", result="ok", project_id=request.projectId)
+    return {"ok": True, "reply": reply, "historyLength": 0, "source": "hermes"}
 
 
 @app.get("/v1/models")
