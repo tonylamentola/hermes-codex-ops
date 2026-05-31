@@ -31,6 +31,7 @@ class Settings:
     worker_require_approval: bool = os.getenv("WORKER_REQUIRE_APPROVAL", "false").lower() == "true"
     codex_cli_model: str = os.getenv("CODEX_CLI_MODEL", "gpt-5.3-codex")
     codex_cli_sandbox: str = os.getenv("CODEX_CLI_SANDBOX", "read-only")
+    codex_cli_timeout_seconds: int = int(os.getenv("CODEX_CLI_TIMEOUT_SECONDS", "600"))
     memory_compression_backend: str = os.getenv("MEMORY_COMPRESSION_BACKEND", "dry-run")
     memory_context_max_chars: int = int(os.getenv("MEMORY_CONTEXT_MAX_CHARS", "12000"))
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -38,6 +39,7 @@ class Settings:
     github_token: str = os.getenv("GITHUB_TOKEN", "")
     github_owner: str = os.getenv("GITHUB_OWNER", "")
     hermes_api_key: str = os.getenv("HERMES_API_KEY", "")
+    dashboard_webhook_secret: str = os.getenv("HERMES_DASHBOARD_SECRET", "")
     codex_jobs_path: str = os.getenv(
         "CODEX_JOBS_PATH", "/Users/anthonylamentola/cued/telegram-codex-bridge/jobs.json"
     )

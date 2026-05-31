@@ -1,5 +1,14 @@
 from system.services.queue import Task
-from system.services.worker import artifact_summary, extract_artifacts, short_task_id, task_chat_ids
+from system.services.worker import (
+    artifact_summary,
+    backend_prompt,
+    expected_artifacts,
+    extract_artifacts,
+    merge_artifacts,
+    missing_required_artifacts,
+    short_task_id,
+    task_chat_ids,
+)
 from system.telegram.bot import (
     _details_text,
     _help_text,
@@ -38,8 +47,9 @@ def test_task_chat_ids_falls_back_without_telegram_payload() -> None:
 def test_task_ack_mentions_updates_and_cancel_command() -> None:
     ack = _task_ack("12345678-aaaa-bbbb-cccc-123456789abc")
 
-    assert "Queued task: 12345678" in ack
+    assert "I saved this as task 12345678" in ack
     assert "Tap Approve" in ack
+    assert "Cancel" in ack
     assert "12345678-aaaa-bbbb-cccc-123456789abc" not in ack
 
 
@@ -51,6 +61,20 @@ def test_task_matches_chat_accepts_string_or_int_chat_id() -> None:
     assert _task_matches_chat(make_task({"telegram": {"chat_id": "7272977804"}}), 7272977804)
     assert _task_matches_chat(make_task({"telegram": {"chat_id": 7272977804}}), 7272977804)
     assert not _task_matches_chat(make_task({}), 7272977804)
+
+
+def test_chat_tasks_sort_newest_first(monkeypatch) -> None:
+    from system.telegram import bot
+
+    old = make_task({"telegram": {"chat_id": 7272977804}})
+    old.id = "old-task"
+    old.updated_at = "2026-05-22T00:00:00+00:00"
+    new = make_task({"telegram": {"chat_id": 7272977804}})
+    new.id = "new-task"
+    new.updated_at = "2026-05-24T00:00:00+00:00"
+    monkeypatch.setattr(bot.queue, "list", lambda limit=200: [old, new])
+
+    assert [task.id for task in bot._chat_tasks(7272977804)] == ["new-task", "old-task"]
 
 
 def test_task_keyboard_exposes_approve_cancel_details() -> None:
@@ -79,12 +103,9 @@ def test_details_text_is_short_and_readable() -> None:
         )
     )
 
-    assert "Task 12345678" in text
-    assert "Status: pending" in text
+    assert "Task 12345678 - pending" in text
     assert "Do the thing" in text
-    assert "Backend: dry-run" in text
-    assert "missing: shirts/new-shirt.png" in text
-    assert "Result preview" in text
+    assert "Files are not ready yet" in text
 
 
 def test_extract_artifacts_finds_relative_and_absolute_paths(tmp_path) -> None:
@@ -109,6 +130,47 @@ def test_artifact_summary_reports_none_and_paths() -> None:
     assert "ok: shirt.png" in text
 
 
+def test_expected_artifacts_expands_task_id_and_marks_required(tmp_path) -> None:
+    task_id = "12345678-aaaa-bbbb-cccc-123456789abc"
+    expected = expected_artifacts(
+        {
+            "artifacts": [
+                {"display_path": "tasks/active.json"},
+                {"display_path": "artifacts/leads/<task_id>-leads.json"},
+            ]
+        },
+        task_id,
+        root=tmp_path,
+    )
+
+    assert len(expected) == 1
+    assert expected[0]["display_path"] == f"artifacts/leads/{task_id}-leads.json"
+    assert expected[0]["required"] is True
+    assert expected[0]["exists"] is False
+
+
+def test_merge_artifacts_preserves_required_missing_state(tmp_path) -> None:
+    required_path = tmp_path / "artifacts" / "leads" / "task-leads.json"
+    merged = merge_artifacts(
+        [{"path": str(required_path), "display_path": "artifacts/leads/task-leads.json", "exists": False, "required": True}],
+        [{"path": str(tmp_path / "other.md"), "display_path": "other.md", "exists": True}],
+    )
+
+    missing = missing_required_artifacts(merged)
+
+    assert [item["display_path"] for item in missing] == ["artifacts/leads/task-leads.json"]
+
+
+def test_backend_prompt_names_required_files() -> None:
+    prompt = backend_prompt(
+        "CONTEXT",
+        [{"display_path": "artifacts/leads/task-leads.json"}],
+    )
+
+    assert "Create every file below before you finish" in prompt
+    assert "artifacts/leads/task-leads.json" in prompt
+
+
 def test_control_summaries_are_not_real_tasks() -> None:
     assert _is_control_summary("Approve")
     assert _is_control_summary("approved")
@@ -120,5 +182,6 @@ def test_control_summaries_are_not_real_tasks() -> None:
 def test_help_text_explains_natural_controls() -> None:
     text = _help_text()
 
-    assert "approve / yes / go ahead" in text
-    assert "tasks or what's the task" in text
+    assert "`status`" in text
+    assert "`latest result`" in text
+    assert "start with `task:`" in text

@@ -41,6 +41,10 @@ codex login
 WORKER_BACKEND=codex-cli CODEX_CLI_SANDBOX=read-only python -m system.services.worker
 ```
 
+`CODEX_CLI_TIMEOUT_SECONDS` defaults to `600`. When the CLI exceeds that limit,
+Hermes terminates the Codex process group and records a normal worker failure
+instead of hanging while waiting for logs/results.
+
 ## Recovery
 
 ```bash

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from system.hermes.coordinator import HermesCoordinator
+from system.hermes.coordinator import HERMES_SYSTEM_PROMPT, HermesCoordinator
 from system.services.ai_backend import CodexBackend, CodexCliBackend, DryRunBackend
 from system.services.audit_log import AuditLog
 from system.services.control_state import ControlState
@@ -86,6 +87,149 @@ def artifact_summary(artifacts: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def expected_artifacts(payload: dict[str, Any], task_id: str, *, root: Path | None = None) -> list[dict[str, Any]]:
+    root = root or settings.root
+    expected: list[dict[str, Any]] = []
+    for artifact in payload.get("artifacts", []):
+        if not isinstance(artifact, dict):
+            continue
+        raw = str(artifact.get("display_path") or artifact.get("path") or "")
+        if not raw:
+            continue
+        expanded = raw.replace("<task_id>", task_id)
+        if "<task_id>" not in raw and not expanded.startswith("artifacts/"):
+            continue
+        path = Path(expanded)
+        resolved = path if path.is_absolute() else root / path
+        expected.append(
+            {
+                "path": str(resolved),
+                "display_path": expanded,
+                "exists": resolved.exists(),
+                "kind": "image" if resolved.suffix.lower() in IMAGE_EXTENSIONS else "file",
+                "required": True,
+            }
+        )
+    return expected
+
+
+def merge_artifacts(*artifact_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for artifacts in artifact_groups:
+        for artifact in artifacts:
+            path = artifact.get("path")
+            if not path:
+                continue
+            current = merged.get(path, {})
+            merged[path] = {**current, **artifact}
+    return sorted(merged.values(), key=lambda item: (not item.get("exists", False), item.get("path", "")))
+
+
+def missing_required_artifacts(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [artifact for artifact in artifacts if artifact.get("required") and not artifact.get("exists")]
+
+
+def backend_prompt(worker_context: str, required_artifacts: list[dict[str, Any]]) -> str:
+    sections = [worker_context]
+    if required_artifacts:
+        required_lines = "\n".join(f"- {artifact['display_path']}" for artifact in required_artifacts)
+        sections.append(
+            "REQUIRED OUTPUT FILES\n"
+            "You are running from the operations repository root. Create every file below before you finish. "
+            "Use mkdir -p for parent directories as needed. Do not merely describe the files.\n"
+            f"{required_lines}\n\n"
+            "After writing the files, reply with the artifact paths and a concise completion summary."
+        )
+    sections.append(
+        "DASHBOARD TASK LEDGER\n"
+        "At the end of your response, include one fenced JSON block labeled DASHBOARD_TASK_UPDATES. "
+        "Use it to record work discovered or decomposed during execution so the Command Center can keep tracking it.\n"
+        "Schema:\n"
+        "```json\n"
+        "{\n"
+        '  "subtasks": [\n'
+        '    {"text": "Completed step", "priority": "green", "status": "completed", "result": "What happened"}\n'
+        "  ],\n"
+        '  "followUpTasks": [\n'
+        '    {"text": "Next task to queue", "priority": "yellow", "estimatedCost": 0.05, "instructions": "How to execute it"}\n'
+        "  ]\n"
+        "}\n"
+        "```\n"
+        "Use empty arrays when there are no subtasks or follow-ups. Do not include secrets."
+    )
+    return "\n\n".join(sections)
+
+
+def extract_dashboard_task_updates(text: str) -> dict[str, list[dict[str, Any]]]:
+    candidates = []
+    labeled = re.search(
+        r"DASHBOARD_TASK_UPDATES[\s:]*```(?:json)?\s*(\{[\s\S]*?\})\s*```",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if labeled:
+        candidates.append(labeled.group(1))
+    candidates.extend(re.findall(r"```json\s*(\{[\s\S]*?\"(?:subtasks|followUpTasks)\"[\s\S]*?\})\s*```", text))
+    candidates.extend(re.findall(r"(\{[\s\S]*?\"(?:subtasks|followUpTasks)\"[\s\S]*?\})", text))
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return {
+                "subtasks": parsed.get("subtasks") if isinstance(parsed.get("subtasks"), list) else [],
+                "followUpTasks": parsed.get("followUpTasks")
+                if isinstance(parsed.get("followUpTasks"), list)
+                else [],
+            }
+    return {"subtasks": [], "followUpTasks": []}
+
+
+async def post_dashboard_callback(
+    task: Task,
+    *,
+    status: str,
+    summary: str,
+    result: str = "",
+    task_updates: dict[str, list[dict[str, Any]]] | None = None,
+) -> None:
+    dashboard = task.payload.get("dashboard")
+    if not isinstance(dashboard, dict):
+        return
+    callback_url = str(dashboard.get("callback_url") or "").strip()
+    if not callback_url:
+        return
+
+    payload = {
+        "projectId": dashboard.get("project_id"),
+        "taskId": dashboard.get("task_id"),
+        "status": status,
+        "summary": summary,
+        "result": result,
+        "secret": dashboard.get("callback_secret"),
+        "notes": [f"Hermes task `{task.id}` updated dashboard task `{dashboard.get('task_id')}`."],
+    }
+    if task_updates:
+        payload["subtasks"] = task_updates.get("subtasks", [])
+        payload["followUpTasks"] = task_updates.get("followUpTasks", [])
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(callback_url, json=payload)
+            response.raise_for_status()
+    except Exception as exc:
+        AuditLog().write(
+            agent="worker",
+            action="dashboard_callback",
+            result="failed",
+            task_id=task.id,
+            error=str(exc),
+        )
+
+
 @dataclass
 class Worker:
     queue: TaskQueue
@@ -134,28 +278,66 @@ class Worker:
             return awaiting
 
         self.audit.write(agent="worker", action="claim", result="active", task_id=task.id)
+        await post_dashboard_callback(
+            task,
+            status="running",
+            summary=f"Hermes started task {short_task_id(task)}.",
+        )
         await self.notifier.send(
             f"Task started: {short_task_id(task)}\n{task.summary}",
             chat_ids=task_chat_ids(task),
         )
         try:
             worker_context = await self.hermes.prepare_worker_context(task.id)
+            required_artifacts = expected_artifacts(task.payload, task.id)
+            self.audit.write(agent="worker", action="backend_start", result="started", task_id=task.id)
+            worker_result = await self.hermes.backend.complete(
+                backend_prompt(worker_context, required_artifacts),
+                system=HERMES_SYSTEM_PROMPT,
+            )
+            result_artifacts = extract_artifacts(worker_result)
+            artifacts = merge_artifacts(result_artifacts, required_artifacts)
             payload = dict(task.payload)
             payload["worker_context"] = worker_context
+            payload["worker_result"] = worker_result
             payload["backend"] = self.hermes.backend.name
-            payload["artifacts"] = extract_artifacts(worker_context)
+            payload["artifacts"] = artifacts
             self.queue.update_payload(task.id, payload)
+            missing = missing_required_artifacts(artifacts)
+            if missing:
+                missing_paths = ", ".join(item["display_path"] for item in missing)
+                raise RuntimeError(f"Required artifact(s) missing after backend run: {missing_paths}")
             completed = self.queue.update_status(task.id, "completed")
             self.memory.append_markdown(
                 "summaries/handoffs.md",
                 "Task completed",
-                f"- Task: `{completed.id}`\n- Summary: {completed.summary}\n- Backend: {self.hermes.backend.name}\n\n{worker_context[:2000]}",
+                f"- Task: `{completed.id}`\n- Summary: {completed.summary}\n- Backend: {self.hermes.backend.name}\n\n{worker_result[:2000]}",
             )
             self.audit.write(agent="worker", action="complete", result="ok", task_id=task.id)
+            task_updates = extract_dashboard_task_updates(worker_result)
+            await post_dashboard_callback(
+                completed,
+                status="completed",
+                summary=f"Hermes completed task {short_task_id(completed)}.",
+                result=worker_result,
+                task_updates=task_updates,
+            )
+            existing_artifacts = [
+                artifact for artifact in completed.payload.get("artifacts", [])
+                if artifact.get("exists")
+            ]
+            artifact_lines = "\n".join(
+                f"- {artifact.get('display_path', artifact.get('path'))}"
+                for artifact in existing_artifacts[:5]
+            )
             completion_message = (
-                f"Task completed: {short_task_id(completed)}\n{completed.summary}\n\n"
-                f"{artifact_summary(completed.payload.get('artifacts', []))}\n\n"
-                f"Use /task {completed.id} for details."
+                f"Done: {short_task_id(completed)}\n"
+                f"{completed.summary}\n\n"
+                + (
+                    f"Files ready:\n{artifact_lines}\n\nSay `latest result` and I’ll send them."
+                    if existing_artifacts
+                    else "No files were attached. Say `tasks` if you want to check the task list."
+                )
             )
             await self.notifier.send(
                 completion_message,
@@ -180,6 +362,12 @@ class Worker:
                 failed = self.queue.update_status(task.id, "failed")
                 result = "failed"
                 message = f"Task failed permanently: {task.id}\n{exc}"
+                await post_dashboard_callback(
+                    failed,
+                    status="failed",
+                    summary=f"Hermes task {short_task_id(failed)} failed.",
+                    result=str(exc),
+                )
             self.memory.append_markdown(
                 "agent-status.md",
                 "Worker task failure",

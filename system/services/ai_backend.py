@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Protocol
 from dataclasses import dataclass
 import asyncio
+import contextlib
+import os
+import signal
 import shutil
 
 from system.services.settings import settings
@@ -73,8 +76,29 @@ class CodexCliBackend:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
-        stdout, stderr = await proc.communicate(full_prompt.encode("utf-8"))
+        timeout = max(1, int(settings.codex_cli_timeout_seconds))
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(full_prompt.encode("utf-8")),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            _terminate_process_group(proc)
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            raise RuntimeError(f"codex CLI timed out after {timeout}s") from exc
         if proc.returncode != 0:
             raise RuntimeError(stderr.decode("utf-8", errors="replace")[-2000:])
         return stdout.decode("utf-8", errors="replace").strip()
+
+
+def _terminate_process_group(proc: asyncio.subprocess.Process) -> None:
+    pid = proc.pid
+    if not pid:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pid, signal.SIGTERM)
+    with contextlib.suppress(ProcessLookupError):
+        proc.terminate()

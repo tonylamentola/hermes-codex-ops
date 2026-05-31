@@ -41,6 +41,8 @@ TASK_QUERY_WORDS = {
 }
 HELP_WORDS = {"help", "commands", "what can you do"}
 STATUS_WORDS = {"status", "system status", "queue status"}
+RESULT_WORDS = {"result", "results", "latest result", "latest results", "send result", "send results", "leads", "where are the leads"}
+FRICTION_WORDS = {"confusing", "not working", "broken", "annoying", "road block", "roadblock", "stuck", "slowed down"}
 CONTROL_SUMMARIES = APPROVE_WORDS | CANCEL_WORDS | TASK_QUERY_WORDS | HELP_WORDS | STATUS_WORDS
 
 
@@ -63,9 +65,7 @@ async def _guard(update: Update) -> bool:
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update):
         return
-    data = hermes.status()
-    control_state = control.read()
-    await update.message.reply_text(f"Queue: {data['queue']}\nPaused: {control_state.get('paused')} {control_state.get('reason', '')}")
+    await update.message.reply_text(_status_text(update.effective_chat.id if update.effective_chat else None))
     audit.write(agent="telegram", action="/status", result="ok")
 
 
@@ -108,8 +108,8 @@ def _telegram_payload(update: Update) -> dict[str, Any]:
 def _task_ack(task_id: str) -> str:
     short_id = task_id[:8]
     return (
-        f"Queued task: {short_id}\n\n"
-        "Tap Approve when you want me to run it."
+        f"I saved this as task {short_id}.\n\n"
+        "Tap Approve to run it, or Cancel to drop it."
     )
 
 
@@ -161,31 +161,32 @@ def _chat_tasks(chat_id: int, *, limit: int = 6) -> list[Task]:
     for task in queue.list(limit=200):
         if _task_matches_chat(task, chat_id) and not _is_control_summary(task.summary):
             tasks.append(task)
-        if len(tasks) >= limit:
-            break
-    return tasks
+    tasks.sort(key=lambda task: task.updated_at, reverse=True)
+    return tasks[:limit]
 
 
 def _tasks_overview(chat_id: int) -> str:
     tasks = _chat_tasks(chat_id)
     if not tasks:
-        return "I do not see any real tasks from this chat yet. Send me the work you want done in one message."
-    lines = ["Recent tasks:"]
+        return "No real tasks from this chat yet. To create one, start with `task:` followed by what you want done."
+    lines = ["Here is what I’m tracking:"]
     for task in tasks:
-        lines.append(f"- {task.id[:8]} [{task.status}] {task.summary}")
-    lines.append("\nReply approve to run the latest waiting task, or cancel to cancel it.")
+        lines.append(f"- {task.id[:8]} - {task.status} - {task.summary}")
+    lines.append("\nSay `latest result` to get the newest completed output.")
     return "\n".join(lines)
 
 
 def _help_text() -> str:
     return (
-        "Send me a normal message to create a durable Hermes task.\n\n"
-        "Natural controls:\n"
-        "- approve / yes / go ahead: run the latest waiting task\n"
-        "- cancel / stop: cancel the latest waiting task\n"
-        "- status: queue status\n"
-        "- tasks or what's the task: recent tasks\n\n"
-        "Commands: /status, /tasks, /task TASK_ID, /approve TASK_ID, /cancel TASK_ID, /logs, /memory"
+        "Use me like this:\n\n"
+        "`status` - what is running, waiting, or done\n"
+        "`tasks` - recent work I’m tracking\n"
+        "`latest result` - send the newest completed files/results\n"
+        "`task: research 20 leads for roofers` - create background work\n"
+        "`approve` - run the latest waiting task\n"
+        "`cancel` - cancel the latest waiting task\n\n"
+        "Main rule: if you want work done in the background, start with `task:`. "
+        "If you just ask a question, I should answer normally."
     )
 
 
@@ -212,19 +213,75 @@ def _cancel_task(task_id: str) -> Task:
 
 def _details_text(task: Task) -> str:
     parts = [
-        f"Task {task.id[:8]}",
-        f"Status: {task.status}",
-        f"Retries: {task.retry_count}",
+        f"Task {task.id[:8]} - {task.status}",
         "",
         task.summary,
     ]
-    if task.payload.get("backend"):
-        parts.append(f"\nBackend: {task.payload['backend']}")
-    parts.append("\n" + artifact_summary(task.payload.get("artifacts", [])))
-    if task.payload.get("worker_context"):
-        result = str(task.payload["worker_context"]).strip()
+    artifacts = task.payload.get("artifacts", [])
+    existing = [artifact for artifact in artifacts if artifact.get("exists")]
+    if existing:
+        parts.append("\nFiles ready:")
+        for artifact in existing[:5]:
+            parts.append(f"- {artifact.get('display_path', artifact.get('path'))}")
+    elif artifacts:
+        parts.append("\nFiles are not ready yet.")
+    result = str(task.payload.get("worker_result") or "").strip()
+    if result:
         parts.append("\nResult preview:\n" + result[:1200])
     return "\n".join(parts)
+
+
+def _status_text(chat_id: int | None) -> str:
+    data = hermes.status()["queue"]
+    control_state = control.read()
+    active = data.get("active", 0)
+    pending = data.get("pending", 0)
+    waiting = data.get("awaiting_approval", 0)
+    failed = data.get("failed", 0)
+    stalled_count = data.get("stalled", 0)
+    paused = bool(control_state.get("paused"))
+    lines = ["Hermes status:"]
+    lines.append("Paused: yes" if paused else "Paused: no")
+    lines.append(f"Running: {active}")
+    lines.append(f"Waiting for approval: {waiting}")
+    lines.append(f"Queued: {pending}")
+    lines.append(f"Stalled/failed: {stalled_count + failed}")
+    if chat_id is not None:
+        latest = _latest_completed_chat_task(chat_id)
+        if latest:
+            lines.append("")
+            lines.append(f"Latest completed: {latest.id[:8]} - {latest.summary}")
+            if _existing_artifacts(latest):
+                lines.append("Say `latest result` and I’ll send the files.")
+    return "\n".join(lines)
+
+
+def _existing_artifacts(task: Task) -> list[dict[str, Any]]:
+    return [artifact for artifact in task.payload.get("artifacts", []) if artifact.get("exists")]
+
+
+def _latest_completed_chat_task(chat_id: int) -> Task | None:
+    for task in _chat_tasks(chat_id, limit=20):
+        if task.status == "completed":
+            return task
+    return None
+
+
+def _looks_like_operator_friction(text: str) -> bool:
+    normalized = text.lower()
+    return any(word in normalized for word in FRICTION_WORDS)
+
+
+def _operator_guide_text() -> str:
+    return (
+        "You’re not supposed to manage the plumbing. Here’s the simple flow:\n\n"
+        "1. Ask me quick questions normally.\n"
+        "2. For background work, start with `task:`.\n"
+        "3. Say `status` to see what’s running.\n"
+        "4. Say `latest result` to get finished files.\n\n"
+        "I’ll stop turning complaints or quick questions into queued tasks. "
+        "That was the part making this feel like OpenClaw all over again."
+    )
 
 
 def _resolve_task(task_id: str) -> Task | None:
@@ -276,16 +333,25 @@ async def plain_text_task(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         audit.write(agent="telegram", action="plain_text_help", result="ok")
         return
     if normalized in STATUS_WORDS:
-        data = hermes.status()
-        control_state = control.read()
-        await update.message.reply_text(
-            f"Queue: {data['queue']}\nPaused: {control_state.get('paused')} {control_state.get('reason', '')}"
-        )
+        await update.message.reply_text(_status_text(update.effective_chat.id if update.effective_chat else None))
         audit.write(agent="telegram", action="plain_text_status", result="ok")
+        return
+    if normalized in RESULT_WORDS:
+        task = _latest_completed_chat_task(update.effective_chat.id)
+        if not task:
+            await update.message.reply_text("I do not see a completed result for this chat yet.")
+            return
+        await update.message.reply_text(_details_text(task)[:3900])
+        await _send_task_artifacts(update, task)
+        audit.write(agent="telegram", action="plain_text_latest_result", result="ok", task_id=task.id)
         return
     if normalized in TASK_QUERY_WORDS:
         await update.message.reply_text(_tasks_overview(update.effective_chat.id))
         audit.write(agent="telegram", action="plain_text_tasks", result="ok")
+        return
+    if _looks_like_operator_friction(summary):
+        await update.message.reply_text(_operator_guide_text())
+        audit.write(agent="telegram", action="plain_text_friction", result="ok")
         return
     if normalized in APPROVE_WORDS or normalized in CANCEL_WORDS:
         task = _latest_chat_task(update.effective_chat.id)
@@ -373,6 +439,7 @@ async def plain_text_task(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             task_id=task.id,
             chat_id=chat_id,
         )
+        await update.message.reply_text(reply[:4000])
         await _reply_task_queued(update, task)
     else:
         audit.write(
@@ -413,8 +480,10 @@ async def task_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update):
         return
-    lines = [f"{task.status} p{task.priority} r{task.retry_count} {task.id[:8]} - {task.summary}" for task in queue.list(limit=20)]
-    await update.message.reply_text("\n".join(lines) or "No tasks.")
+    if update.effective_chat:
+        await update.message.reply_text(_tasks_overview(update.effective_chat.id))
+    else:
+        await update.message.reply_text("No chat context.")
     audit.write(agent="telegram", action="/tasks", result="ok")
 
 

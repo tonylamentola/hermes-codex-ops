@@ -22,3 +22,6 @@ All important actions must write append-only JSONL records to `/logs`.
 tail -n 50 logs/ops.jsonl
 jq -c 'select(.result=="failed")' logs/ops.jsonl
 ```
+
+Hermes reads recent log entries with a bounded tail reader so large audit logs
+do not block status, healthcheck, or Telegram `/logs` responses.
