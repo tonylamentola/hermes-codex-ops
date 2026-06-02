@@ -17,6 +17,8 @@ from system.services.settings import settings
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 ARTIFACT_EXTENSIONS = IMAGE_EXTENSIONS | {".svg", ".pdf", ".zip", ".json", ".md", ".txt"}
+PATH_ANCHORS = {"artifacts", "assets", "outputs", "output", "public", "dist", "build"}
+AUTO_SEND_ARTIFACT_LIMIT = 5
 
 
 def choose_backend():
@@ -44,10 +46,65 @@ def short_task_id(task: Task) -> str:
     return task.id[:8]
 
 
+def _artifact_search_roots(root: Path) -> list[Path]:
+    roots = [root]
+    try:
+        from system.services.context_router import load_routing_manifest
+
+        for item in load_routing_manifest().get("projects", []):
+            for key in ("repoCachePath", "repo_cache_path", "workspacePath", "workspace_path"):
+                raw = str(item.get(key) or "")
+                if not raw:
+                    continue
+                path = Path(raw)
+                roots.append(path if path.is_absolute() else root / path)
+    except (OSError, ValueError, TypeError):
+        pass
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in roots:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _candidate_suffixes(candidate: str) -> list[Path]:
+    normalized = candidate.replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part and not part.endswith(":")]
+    suffixes: list[Path] = []
+    for index, part in enumerate(parts):
+        if part.lower() in PATH_ANCHORS:
+            suffixes.append(Path(*parts[index:]))
+    if parts:
+        suffixes.append(Path(parts[-1]))
+    return suffixes
+
+
+def _resolve_artifact_path(candidate: str, roots: list[Path]) -> Path:
+    normalized = candidate.replace("\\", "/")
+    path = Path(normalized)
+    if path.is_absolute() and path.exists():
+        return path
+    search_paths: list[Path] = []
+    if not path.is_absolute():
+        search_paths.extend(root / path for root in roots)
+    for suffix in _candidate_suffixes(candidate):
+        search_paths.extend(root / suffix for root in roots)
+    for search_path in search_paths:
+        if search_path.exists():
+            return search_path
+    return path if path.is_absolute() else roots[0] / path
+
+
 def extract_artifacts(text: str, *, root: Path | None = None) -> list[dict[str, Any]]:
     root = root or settings.root
+    roots = _artifact_search_roots(root)
     candidates = set()
     candidates.update(re.findall(r"`([^`]+)`", text))
+    candidates.update(re.findall(r"([A-Za-z]:\\[A-Za-z0-9_.:\\\\ -]+)", text))
     candidates.update(re.findall(r"(/[A-Za-z0-9._~:/?#@!$&'()*+,;=% -]+)", text))
     candidates.update(re.findall(r"([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_. -]+)+)", text))
 
@@ -57,10 +114,10 @@ def extract_artifacts(text: str, *, root: Path | None = None) -> list[dict[str, 
         candidate = raw.strip().strip(".,:;)")
         if not candidate:
             continue
-        path = Path(candidate)
+        path = Path(candidate.replace("\\", "/"))
         if path.suffix.lower() not in ARTIFACT_EXTENSIONS:
             continue
-        resolved = path if path.is_absolute() else root / path
+        resolved = _resolve_artifact_path(candidate, roots)
         key = str(resolved)
         if key in seen:
             continue
@@ -161,8 +218,8 @@ class Worker:
                 completion_message,
                 chat_ids=task_chat_ids(completed),
             )
-            for artifact in completed.payload.get("artifacts", [])[:3]:
-                if artifact.get("exists") and artifact.get("kind") == "image":
+            for artifact in completed.payload.get("artifacts", [])[:AUTO_SEND_ARTIFACT_LIMIT]:
+                if artifact.get("exists"):
                     await self.notifier.send_file(
                         artifact["path"],
                         caption=f"Artifact for {short_task_id(completed)}: {artifact['display_path']}",

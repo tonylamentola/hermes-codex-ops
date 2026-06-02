@@ -103,6 +103,36 @@ def test_extract_artifacts_finds_relative_and_absolute_paths(tmp_path) -> None:
     assert any(item["display_path"] == "assets/missing-shirt.webp" for item in artifacts)
 
 
+def test_extract_artifacts_remaps_windows_paths_to_existing_workspace_files(tmp_path) -> None:
+    image = tmp_path / "outputs" / "assets" / "frog.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"png")
+
+    artifacts = extract_artifacts(
+        r"Created `C:\Users\anthony\projects\game\outputs\assets\frog.png`.",
+        root=tmp_path,
+    )
+
+    assert artifacts[0]["path"] == str(image)
+    assert artifacts[0]["exists"] is True
+    assert artifacts[0]["kind"] == "image"
+
+
+def test_extract_artifacts_remaps_absolute_paths_by_artifact_anchor(tmp_path) -> None:
+    document = tmp_path / "artifacts" / "reports" / "summary.txt"
+    document.parent.mkdir(parents=True)
+    document.write_text("done", encoding="utf-8")
+
+    artifacts = extract_artifacts(
+        "Wrote /Users/anthony/project/artifacts/reports/summary.txt",
+        root=tmp_path,
+    )
+
+    assert artifacts[0]["path"] == str(document)
+    assert artifacts[0]["exists"] is True
+    assert artifacts[0]["kind"] == "file"
+
+
 def test_artifact_summary_reports_none_and_paths() -> None:
     assert artifact_summary([]) == "Artifacts: none reported."
     text = artifact_summary([{"display_path": "shirt.png", "exists": True}])
