@@ -17,8 +17,13 @@ from system.services.settings import settings
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 ARTIFACT_EXTENSIONS = IMAGE_EXTENSIONS | {".svg", ".pdf", ".zip", ".json", ".md", ".txt"}
+AUTO_SEND_EXTENSIONS = IMAGE_EXTENSIONS | {".svg", ".pdf", ".zip", ".txt"}
 PATH_ANCHORS = {"artifacts", "assets", "outputs", "output", "public", "dist", "build"}
 AUTO_SEND_ARTIFACT_LIMIT = 5
+WORKER_EXECUTION_SYSTEM = """You are Codex executing a Hermes worker task.
+Use the provided WORKER_CONTEXT as operational context, then complete the task.
+Return a concise result for the operator. If you create or identify deliverables,
+include only the final deliverable paths, not every context file you inspected."""
 
 
 def choose_backend():
@@ -143,6 +148,21 @@ def artifact_summary(artifacts: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def auto_send_artifacts(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sendable = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("exists") and Path(str(artifact.get("path", ""))).suffix.lower() in AUTO_SEND_EXTENSIONS
+    ]
+    return sorted(
+        sendable,
+        key=lambda item: (
+            0 if item.get("kind") == "image" else 1,
+            str(item.get("path", "")),
+        ),
+    )[:AUTO_SEND_ARTIFACT_LIMIT]
+
+
 @dataclass
 class Worker:
     queue: TaskQueue
@@ -197,34 +217,45 @@ class Worker:
         )
         try:
             worker_context = await self.hermes.prepare_worker_context(task.id)
+            worker_result = await self.hermes.backend.complete(
+                worker_context,
+                system=WORKER_EXECUTION_SYSTEM,
+            )
             payload = dict(task.payload)
             payload["worker_context"] = worker_context
+            payload["worker_result"] = worker_result
             payload["backend"] = self.hermes.backend.name
-            payload["artifacts"] = extract_artifacts(worker_context)
+            payload["artifacts"] = extract_artifacts(worker_result)
             self.queue.update_payload(task.id, payload)
             completed = self.queue.update_status(task.id, "completed")
             self.memory.append_markdown(
                 "summaries/handoffs.md",
                 "Task completed",
-                f"- Task: `{completed.id}`\n- Summary: {completed.summary}\n- Backend: {self.hermes.backend.name}\n\n{worker_context[:2000]}",
+                f"- Task: `{completed.id}`\n- Summary: {completed.summary}\n- Backend: {self.hermes.backend.name}\n\n{worker_result[:2000]}",
             )
             self.audit.write(agent="worker", action="complete", result="ok", task_id=task.id)
+            sendable = auto_send_artifacts(completed.payload.get("artifacts", []))
+            if sendable:
+                artifact_note = f"Sending {len(sendable)} artifact file(s) now."
+            elif completed.payload.get("artifacts"):
+                artifact_note = "I found artifact paths, but no Telegram-sendable files."
+            else:
+                artifact_note = worker_result[:1500]
             completion_message = (
                 f"Task completed: {short_task_id(completed)}\n{completed.summary}\n\n"
-                f"{artifact_summary(completed.payload.get('artifacts', []))}\n\n"
+                f"{artifact_note}\n\n"
                 f"Use /task {completed.id} for details."
             )
             await self.notifier.send(
                 completion_message,
                 chat_ids=task_chat_ids(completed),
             )
-            for artifact in completed.payload.get("artifacts", [])[:AUTO_SEND_ARTIFACT_LIMIT]:
-                if artifact.get("exists"):
-                    await self.notifier.send_file(
-                        artifact["path"],
-                        caption=f"Artifact for {short_task_id(completed)}: {artifact['display_path']}",
-                        chat_ids=task_chat_ids(completed),
-                    )
+            for artifact in sendable:
+                await self.notifier.send_file(
+                    artifact["path"],
+                    caption=f"Artifact for {short_task_id(completed)}: {artifact['display_path']}",
+                    chat_ids=task_chat_ids(completed),
+                )
             return completed
         except Exception as exc:
             fresh = self.queue.get(task.id)

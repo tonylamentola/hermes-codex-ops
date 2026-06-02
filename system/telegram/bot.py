@@ -225,8 +225,8 @@ def _details_text(task: Task) -> str:
     if task.payload.get("backend"):
         parts.append(f"\nBackend: {task.payload['backend']}")
     parts.append("\n" + artifact_summary(task.payload.get("artifacts", [])))
-    if task.payload.get("worker_context"):
-        result = str(task.payload["worker_context"]).strip()
+    if task.payload.get("worker_result") or task.payload.get("worker_context"):
+        result = str(task.payload.get("worker_result") or task.payload["worker_context"]).strip()
         parts.append("\nResult preview:\n" + result[:1200])
     return "\n".join(parts)
 
