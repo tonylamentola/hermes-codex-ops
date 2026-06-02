@@ -26,9 +26,18 @@ def _init_queue(path):
         )
 
 
-def _insert_task(path, *, task_id, timestamp, chat_id, status="completed", summary="Do work"):
+def _insert_task(
+    path,
+    *,
+    task_id,
+    timestamp,
+    chat_id,
+    status="completed",
+    summary="Do work",
+    message_text=None,
+):
     payload = {
-        "telegram": {"chat_id": chat_id},
+        "telegram": {"chat_id": chat_id, "message_text": message_text},
         "worker_context": "Finished the work and wrote durable state.",
     }
     with sqlite3.connect(path) as conn:
@@ -53,6 +62,7 @@ def test_export_chat_records_includes_matching_tasks_and_events(tmp_path):
         timestamp="2026-06-01T12:00:00+00:00",
         chat_id=7272977804,
         summary="Build Hermes into an ultimate agent",
+        message_text="go ahead do that. i want to build hermes to be the ultimate agent",
     )
     _insert_task(
         database_path,
@@ -99,6 +109,7 @@ def test_export_chat_records_includes_matching_tasks_and_events(tmp_path):
     text = output_path.read_text(encoding="utf-8")
     assert "Raw Telegram message bodies are not persisted" in text
     assert "Build Hermes into an ultimate agent" in text
+    assert "go ahead do that" in text
     assert "telegram.conversation" in text
     assert "Finished the work" in text
     assert "Wrong chat" not in text

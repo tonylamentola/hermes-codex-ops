@@ -52,7 +52,7 @@ sqlite3 tasks/queue.sqlite3 'select status,count(*) from tasks group by status;'
 
 ## Telegram Export Recovery
 
-Raw Telegram message bodies are not currently stored in durable records. Hermes can export the durable audit trail, chat-linked task summaries, approvals, worker lifecycle, and available result previews.
+Telegram message text is stored for future task submissions in durable task payloads. Older records may only have the durable audit trail, chat-linked task summaries, approvals, worker lifecycle, and available result previews.
 
 From Telegram:
 

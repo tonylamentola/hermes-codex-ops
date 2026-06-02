@@ -100,6 +100,7 @@ def _telegram_payload(update: Update) -> dict[str, Any]:
             "chat_id": chat.id if chat else None,
             "chat_type": chat.type if chat else None,
             "message_id": message.message_id if message else None,
+            "message_text": message.text if message and message.text else None,
             "user_id": user.id if user else None,
             "username": user.username if user else None,
             "first_name": user.first_name if user else None,

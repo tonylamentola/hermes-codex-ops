@@ -16,7 +16,7 @@ This system intentionally separates coordination from durable state. The operato
 - A dashboard task can be moved to `running` before the VPS accepts it. The dashboard route should put it back in `queued` if webhook delivery fails.
 - A Hermes task can be created without enough project/template context. The coordinator now injects dashboard-sent template context or reads the VPS repo cache.
 - A direct Telegram task can start in the wrong project if the message does not name one. Hermes should ask a clarifying question for ambiguous project/workspace tasks.
-- Raw Telegram message bodies are not currently persisted in durable records. `/export_chat` reconstructs the auditable durable timeline from queue rows and JSONL logs, including task summaries/results, but it is not a verbatim transcript unless message-body persistence is added.
+- Telegram task payloads now persist originating message text for future task submissions. Older tasks still lack raw message bodies, so `/export_chat` reconstructs those older conversations from queue rows and JSONL logs, including task summaries/results, but it cannot make historical raw text appear retroactively.
 - Generated artifacts can be mentioned but not written. Worker checks required artifacts when the task payload declares them.
 - Reply/outreach data can split across email, Facebook, Telegram, and dashboard if imports are manual. All replies should become dashboard lead events.
 - GitHub watcher state can show commits but not local code. `system.scripts.sync_repo_cache` refreshes local repo caches from GitHub.

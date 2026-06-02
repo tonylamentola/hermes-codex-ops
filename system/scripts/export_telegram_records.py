@@ -95,6 +95,21 @@ def _payload_worker_result(payload_text: str, max_chars: int = 1200) -> str | No
     return text[:max_chars] + ("..." if len(text) > max_chars else "")
 
 
+def _payload_message_text(payload_text: str, max_chars: int = 1200) -> str | None:
+    try:
+        payload = json.loads(payload_text)
+    except json.JSONDecodeError:
+        return None
+    telegram = payload.get("telegram")
+    if not isinstance(telegram, dict):
+        return None
+    text = telegram.get("message_text")
+    if not text:
+        return None
+    cleaned = str(text).strip()
+    return cleaned[:max_chars] + ("..." if len(cleaned) > max_chars else "")
+
+
 def render_export(*, chat_id: int, day: date, tasks: list[dict[str, Any]], events: list[dict[str, Any]]) -> str:
     lines: list[str] = [
         "Hermes Telegram Conversation Export (Durable Records)",
@@ -132,6 +147,16 @@ def render_export(*, chat_id: int, day: date, tasks: list[dict[str, Any]], event
             )
     else:
         lines.append("- none")
+
+    messages = [
+        (task, text)
+        for task in tasks
+        if (text := _payload_message_text(str(task.get("payload", ""))))
+    ]
+    if messages:
+        lines.extend(["", "Persisted Telegram Message Text:"])
+        for task, text in messages:
+            lines.append(f"\nTask {task['id']} message:\n{text}")
 
     completed = [task for task in tasks if task.get("status") == "completed"]
     if completed:

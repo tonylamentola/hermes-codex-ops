@@ -39,9 +39,9 @@ Completed tasks store a `worker_context` result preview and an `artifacts` list 
 
 ## Durable Chat Exports
 
-Use `/export_chat` to create a text export from durable Hermes records for the current chat. The export includes chat-linked task summaries, approvals, worker events, notifier events, and available result previews.
+Use `/export_chat` to create a text export from durable Hermes records for the current chat. The export includes chat-linked task summaries, persisted message text when available, approvals, worker events, notifier events, and available result previews.
 
-Raw Telegram message bodies are not persisted in current durable logs. The export is therefore an auditable operations timeline, not a verbatim Telegram chat transcript unless future storage explicitly records message bodies.
+Raw Telegram message text is persisted for future task submissions in the task payload. Older tasks created before message-text persistence remain an auditable operations timeline, not a verbatim Telegram chat transcript.
 
 The same export can be generated on the VPS:
 
