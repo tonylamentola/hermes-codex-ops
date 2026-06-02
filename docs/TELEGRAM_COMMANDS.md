@@ -16,6 +16,7 @@ Telegram is the command center and notification surface.
 - `/artifacts TASK_ID`: send reported artifact files/images when they exist on the VPS
 - `/stalled`: stalled tasks
 - `/logs`: recent audit log entries
+- `/export_chat optional-YYYY-MM-DD`: create and send a durable Hermes chat export for the current Telegram chat
 - `/retry TASK_ID`: requeue a task and increment retry count
 - `/pause optional reason`: pause worker task claiming
 - `/resume`: resume worker task claiming
@@ -35,3 +36,15 @@ Watcher and worker notifications are sent with Telegram's HTTP API when `TELEGRA
 Tasks created from plain Telegram text include the originating chat ID in the task payload. Worker updates for those tasks are sent back to that chat when the task starts, completes, fails, retries, or needs approval. Full task IDs remain available for recovery, but the normal mobile flow should use buttons or short text replies.
 
 Completed tasks store a `worker_context` result preview and an `artifacts` list in the task payload. The worker extracts artifact paths from backend output, marks whether each file exists, and sends up to three existing image artifacts back to Telegram automatically. Use `/artifacts TASK_ID` to resend available files.
+
+## Durable Chat Exports
+
+Use `/export_chat` to create a text export from durable Hermes records for the current chat. The export includes chat-linked task summaries, approvals, worker events, notifier events, and available result previews.
+
+Raw Telegram message bodies are not persisted in current durable logs. The export is therefore an auditable operations timeline, not a verbatim Telegram chat transcript unless future storage explicitly records message bodies.
+
+The same export can be generated on the VPS:
+
+```bash
+python -m system.scripts.export_telegram_records --chat-id CHAT_ID --date YYYY-MM-DD
+```

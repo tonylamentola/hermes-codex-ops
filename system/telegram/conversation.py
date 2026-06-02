@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
-
 from system.hermes.coordinator import HERMES_SYSTEM_PROMPT, HermesCoordinator
 from system.services.audit_log import AuditLog
 from system.services.context_router import ContextRouter, context_packet_to_markdown

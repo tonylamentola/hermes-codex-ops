@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 import html
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from system.hermes.coordinator import HermesCoordinator
 from system.hermes.openai_adapter import _backend as _build_ai_backend
+from system.scripts.export_telegram_records import ExportPaths, export_chat_records
 from system.telegram.conversation import chat_with_hermes
 from system.services.audit_log import AuditLog
 from system.services.control_state import ControlState
@@ -185,7 +187,8 @@ def _help_text() -> str:
         "- cancel / stop: cancel the latest waiting task\n"
         "- status: queue status\n"
         "- tasks or what's the task: recent tasks\n\n"
-        "Commands: /status, /tasks, /task TASK_ID, /approve TASK_ID, /cancel TASK_ID, /logs, /memory"
+        "Commands: /status, /tasks, /task TASK_ID, /approve TASK_ID, /cancel TASK_ID, "
+        "/logs, /memory, /export_chat"
     )
 
 
@@ -470,6 +473,59 @@ async def memory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     audit.write(agent="telegram", action="/memory", result="ok")
 
 
+def _parse_export_date(raw: str | None) -> date:
+    if not raw:
+        return datetime.now(UTC).date()
+    return date.fromisoformat(raw)
+
+
+async def export_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update):
+        return
+    if not update.effective_chat or not update.message:
+        return
+    try:
+        day = _parse_export_date(context.args[0] if context.args else None)
+    except ValueError:
+        await update.message.reply_text("Usage: /export_chat optional-YYYY-MM-DD")
+        return
+
+    chat_id = int(update.effective_chat.id)
+    output = settings.root / "artifacts" / "chat-exports" / f"{day.isoformat()}-chat-{chat_id}.txt"
+    path = export_chat_records(
+        chat_id=chat_id,
+        day=day,
+        paths=ExportPaths(
+            database_path=settings.database_path,
+            log_path=settings.log_path,
+            output_path=output,
+        ),
+    )
+    audit.write(
+        agent="telegram",
+        action="/export_chat",
+        result="created",
+        chat_id=chat_id,
+        path=str(path),
+    )
+    with path.open("rb") as handle:
+        await update.message.reply_document(
+            document=handle,
+            filename=path.name,
+            caption=(
+                "Durable Hermes chat export. Raw Telegram message bodies are only included "
+                "if they were explicitly persisted in durable task/log state."
+            ),
+        )
+    audit.write(
+        agent="telegram",
+        action="/export_chat",
+        result="sent",
+        chat_id=chat_id,
+        path=str(path),
+    )
+
+
 async def retry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update):
         return
@@ -563,6 +619,7 @@ def build_app() -> Application:
         "artifacts": artifacts,
         "stalled": stalled,
         "logs": logs,
+        "export_chat": export_chat,
         "retry": retry,
         "pause": pause,
         "resume": resume,

@@ -121,3 +121,5 @@ jq . tasks/awaiting_approval.json
 less memory/summaries/context-pack.md
 tail -n 100 logs/ops.jsonl
 ```
+
+For Hostinger-specific browser/web-terminal recovery, see [HOSTINGER_RECOVERY.md](HOSTINGER_RECOVERY.md).

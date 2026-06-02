@@ -45,6 +45,12 @@ python -m system.scripts.sync_codex_jobs
 python -m system.services.memory_compressor
 ```
 
+Export durable Telegram/Hermes records for a chat:
+
+```bash
+python -m system.scripts.export_telegram_records --chat-id CHAT_ID --date YYYY-MM-DD
+```
+
 ## Operating Model
 
 1. Telegram receives commands and notifications.
