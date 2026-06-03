@@ -17,7 +17,14 @@ async def main() -> None:
     submit = sub.add_parser("submit")
     submit.add_argument("summary")
     submit.add_argument("--priority", type=int, default=5)
+    submit.add_argument("--agent", default="codex")
+    submit.add_argument("--decompose", action="store_true")
     sub.add_parser("status")
+    sub.add_parser("audit-capabilities")
+    plan = sub.add_parser("plan")
+    plan.add_argument("summary")
+    plan.add_argument("--priority", type=int, default=5)
+    plan.add_argument("--enqueue", action="store_true")
     context = sub.add_parser("context")
     context.add_argument("task_id")
     resolve = sub.add_parser("resolve")
@@ -31,10 +38,23 @@ async def main() -> None:
     TaskQueue().export_json()
 
     if args.command == "submit":
-        task = await hermes.submit_task(args.summary, priority=args.priority)
+        task = await hermes.submit_task(
+            args.summary,
+            priority=args.priority,
+            assigned_agent=args.agent,
+            decompose=args.decompose,
+        )
         print(task.id)
     elif args.command == "status":
         print(hermes.status())
+    elif args.command == "audit-capabilities":
+        print(json.dumps(hermes.audit_capabilities(), indent=2, sort_keys=True))
+    elif args.command == "plan":
+        if args.enqueue:
+            task = await hermes.submit_task(args.summary, priority=args.priority, decompose=True)
+            print(json.dumps({"root_task_id": task.id, "subtasks": hermes.plan_subtasks(args.summary, priority=args.priority)}, indent=2, sort_keys=True))
+        else:
+            print(json.dumps(hermes.plan_subtasks(args.summary, priority=args.priority), indent=2, sort_keys=True))
     elif args.command == "context":
         print(await hermes.prepare_worker_context(args.task_id))
     elif args.command == "resolve":

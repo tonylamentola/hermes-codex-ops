@@ -11,7 +11,7 @@ from system.services.audit_log import utc_now
 from system.services.settings import settings
 
 
-TASK_STATUSES = {"pending", "active", "stalled", "completed", "failed", "cancelled", "awaiting_approval"}
+TASK_STATUSES = {"pending", "planned", "active", "stalled", "completed", "failed", "cancelled", "awaiting_approval"}
 
 
 @dataclass
@@ -143,17 +143,18 @@ class TaskQueue:
             row = conn.execute(
                 """
                 SELECT * FROM tasks
-                WHERE status = 'pending'
+                WHERE status = 'pending' AND assigned_agent = ?
                 ORDER BY priority DESC, timestamp ASC
                 LIMIT 1
-                """
+                """,
+                (assigned_agent,),
             ).fetchone()
             if not row:
                 conn.commit()
                 return None
             conn.execute(
-                "UPDATE tasks SET status = 'active', assigned_agent = ?, updated_at = ? WHERE id = ?",
-                (assigned_agent, now, row["id"]),
+                "UPDATE tasks SET status = 'active', updated_at = ? WHERE id = ?",
+                (now, row["id"]),
             )
             conn.commit()
         task = self.get(row["id"])
@@ -180,7 +181,7 @@ class TaskQueue:
         return [self._row_to_task(row) for row in rows]
 
     def export_json(self) -> None:
-        for status in ("active", "pending", "stalled", "completed", "failed", "cancelled", "awaiting_approval"):
+        for status in ("active", "pending", "planned", "stalled", "completed", "failed", "cancelled", "awaiting_approval"):
             tasks = [asdict(task) for task in self.list(status=status, limit=200)]
             (self.tasks_dir / f"{status}.json").write_text(
                 json.dumps(tasks, indent=2, sort_keys=True) + "\n",

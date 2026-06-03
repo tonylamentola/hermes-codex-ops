@@ -10,6 +10,7 @@ from system.services.context_router import ContextRouter, context_packet_to_mark
 from system.services.memory import MemoryStore
 from system.services.queue import Task, TaskQueue
 from system.services.settings import settings
+from system.hermes.capabilities import CapabilityPlanner
 
 
 HERMES_SYSTEM_PROMPT = """Hermes coordinates AI operations.
@@ -117,16 +118,83 @@ class HermesCoordinator:
     def create(cls, backend: AIBackend | None = None) -> "HermesCoordinator":
         return cls(TaskQueue(), MemoryStore(), AuditLog(), backend or DryRunBackend())
 
-    async def submit_task(self, summary: str, *, priority: int = 5, payload: dict | None = None) -> Task:
+    async def submit_task(
+        self,
+        summary: str,
+        *,
+        priority: int = 5,
+        payload: dict | None = None,
+        assigned_agent: str = "codex",
+        decompose: bool = False,
+    ) -> Task:
         self.memory.ensure_baseline()
-        task = self.queue.create(summary=summary, assigned_agent="codex", priority=priority, payload=payload)
+        task_payload = dict(payload or {})
+        task_payload.setdefault("coordination", {})
+        task_payload["coordination"].update({"decompose": decompose, "root_task": True})
+        task = self.queue.create(summary=summary, assigned_agent=assigned_agent, priority=priority, payload=task_payload)
         self.memory.append_markdown(
             "active-projects.md",
             "Task submitted",
-            f"- Task: `{task.id}`\n- Summary: {summary}\n- Assigned agent: codex",
+            f"- Task: `{task.id}`\n- Summary: {summary}\n- Assigned agent: {assigned_agent}",
         )
         self.audit.write(agent="hermes", action="submit_task", result="queued", task_id=task.id)
+        if decompose:
+            subtasks = self.create_subtasks(task.id)
+            task = self.queue.update_status(task.id, "planned")
+            self.memory.append_markdown(
+                "agent-status.md",
+                "Task decomposed",
+                "\n".join(
+                    [
+                        f"- Root task: `{task.id}`",
+                        *[
+                            f"- Subtask `{subtask.id}` -> {subtask.assigned_agent}: {subtask.summary}"
+                            for subtask in subtasks
+                        ],
+                    ]
+                ),
+            )
         return task
+
+    def audit_capabilities(self) -> list[dict[str, str]]:
+        findings = CapabilityPlanner().audit()
+        self.memory.ensure_baseline()
+        self.memory.write_json_state("agents/capability-audit.json", {"findings": findings})
+        self.audit.write(agent="hermes", action="audit_capabilities", result="ok", count=len(findings))
+        return findings
+
+    def plan_subtasks(self, summary: str, *, priority: int = 5, payload: dict | None = None) -> list[dict]:
+        return [subtask.__dict__ for subtask in CapabilityPlanner().plan(summary, priority=priority, payload=payload)]
+
+    def create_subtasks(self, root_task_id: str) -> list[Task]:
+        root_task = self.queue.get(root_task_id)
+        if not root_task:
+            raise KeyError(root_task_id)
+        planned = CapabilityPlanner().plan(root_task.summary, priority=root_task.priority, payload=root_task.payload)
+        created: list[Task] = []
+        for subtask in planned:
+            payload = dict(root_task.payload)
+            payload["coordination"] = {
+                **dict(payload.get("coordination") or {}),
+                "root_task_id": root_task.id,
+                "subtask_reason": subtask.reason,
+            }
+            created.append(
+                self.queue.create(
+                    summary=subtask.summary,
+                    assigned_agent=subtask.assigned_agent,
+                    priority=subtask.priority,
+                    payload=payload,
+                )
+            )
+        self.audit.write(
+            agent="hermes",
+            action="create_subtasks",
+            result="ok",
+            task_id=root_task.id,
+            count=len(created),
+        )
+        return created
 
     async def prepare_worker_context(self, task_id: str) -> str:
         task = self.queue.get(task_id)
@@ -178,6 +246,7 @@ class HermesCoordinator:
             status: len(self.queue.list(status=status, limit=500))
             for status in (
                 "pending",
+                "planned",
                 "active",
                 "awaiting_approval",
                 "stalled",

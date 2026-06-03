@@ -24,6 +24,19 @@ python -m system.services.worker --once
 python -m system.hermes.main status
 ```
 
+Audit and use orchestration capabilities:
+
+```bash
+python -m system.hermes.main audit-capabilities
+python -m system.hermes.main plan "Audit Hermes setup and implement missing orchestration" --enqueue
+python -m system.services.worker --agent codex-research --once
+python -m system.services.worker --agent codex-implementation --once
+python -m system.services.worker --agent codex-verification --once
+python -m system.services.worker --agent codex-improvement --once
+```
+
+See `docs/HERMES_CAPABILITY_AUDIT.md` for the current capability gap analysis.
+
 Docker:
 
 ```bash
@@ -75,6 +88,7 @@ python -m system.scripts.export_telegram_records --chat-id CHAT_ID --date YYYY-M
 - Real Telegram notifier service
 - Memory compression and context packs
 - Codex job tracker sync into durable memory
+- Capability audit, explicit planning, and named worker lanes for multi-agent delegation
 - Operator pause/resume/cancel/approval controls
 - VPS bootstrap and health-check scripts
 - Recovery-focused documentation

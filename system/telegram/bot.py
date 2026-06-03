@@ -90,6 +90,37 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     audit.write(agent="telegram", action="/submit", result="queued", task_id=task.id)
 
 
+async def plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update):
+        return
+    summary = " ".join(context.args).strip()
+    if not summary:
+        await update.message.reply_text("Usage: /plan TASK SUMMARY")
+        return
+    task = await hermes.submit_task(summary, priority=5, payload=_telegram_payload(update), decompose=True)
+    subtasks = [
+        item
+        for item in queue.list(status="pending", limit=50)
+        if item.payload.get("coordination", {}).get("root_task_id") == task.id
+    ]
+    lines = [f"Queued plan root: {task.id[:8]}"]
+    for subtask in subtasks[:8]:
+        lines.append(f"- {subtask.id[:8]} [{subtask.assigned_agent}] {subtask.summary}")
+    await update.message.reply_text("\n".join(lines))
+    audit.write(agent="telegram", action="/plan", result="queued", task_id=task.id, count=len(subtasks))
+
+
+async def audit_capabilities(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update):
+        return
+    findings = hermes.audit_capabilities()
+    lines = ["Hermes capability audit:"]
+    for item in findings:
+        lines.append(f"- {item['name']}: {item['status']}")
+    await update.message.reply_text("\n".join(lines)[:3900])
+    audit.write(agent="telegram", action="/audit_capabilities", result="ok")
+
+
 def _telegram_payload(update: Update) -> dict[str, Any]:
     chat = update.effective_chat
     user = update.effective_user
@@ -189,7 +220,7 @@ def _help_text() -> str:
         "- status: queue status\n"
         "- tasks or what's the task: recent tasks\n\n"
         "Commands: /status, /tasks, /task TASK_ID, /approve TASK_ID, /cancel TASK_ID, "
-        "/logs, /memory, /export_chat"
+        "/plan TASK SUMMARY, /audit_capabilities, /logs, /memory, /export_chat"
     )
 
 
@@ -613,6 +644,8 @@ def build_app() -> Application:
         "start": help_cmd,
         "help": help_cmd,
         "submit": submit,
+        "plan": plan,
+        "audit_capabilities": audit_capabilities,
         "projects": projects,
         "deployments": deployments,
         "tasks": tasks,

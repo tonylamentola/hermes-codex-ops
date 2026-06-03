@@ -7,6 +7,7 @@ The task queue must survive process crashes and VPS restarts.
 - SQLite source of truth: `tasks/queue.sqlite3`
 - Human-readable exports:
   - `tasks/pending.json`
+  - `tasks/planned.json`
   - `tasks/active.json`
   - `tasks/stalled.json`
   - `tasks/completed.json`
@@ -20,7 +21,7 @@ Every task has:
 - `assigned_agent`
 - `priority`
 - `retry_count`
-- `status`
+- `status` (`pending`, `planned`, `active`, `awaiting_approval`, `stalled`, `completed`, `failed`, `cancelled`)
 - `summary`
 - `payload`
 - `updated_at`
@@ -28,6 +29,7 @@ Every task has:
 ## Statuses
 
 - `pending`: ready for assignment
+- `planned`: decomposition root recorded; child tasks are the executable work
 - `active`: assigned and being worked
 - `stalled`: exceeded watcher threshold
 - `completed`: finished
@@ -37,11 +39,11 @@ Every task has:
 
 ## Worker Loop
 
-The worker claims one pending task at a time with an atomic SQLite update:
+The worker claims one pending task from one assigned-agent lane at a time with an atomic SQLite update:
 
 ```bash
 python -m system.services.worker --once
-python -m system.services.worker
+python -m system.services.worker --agent codex-implementation
 ```
 
 Set `WORKER_BACKEND=dry-run` for smoke tests. Set `WORKER_BACKEND=codex-cli` to use the Codex CLI login, or `WORKER_BACKEND=codex-api` with `OPENAI_API_KEY` for direct API use.

@@ -20,6 +20,18 @@ python -m system.services.worker --once
 python -m system.services.worker
 ```
 
+Workers claim one assigned-agent lane at a time. The default lane is `codex`.
+
+```bash
+python -m system.services.worker --agent codex-research
+python -m system.services.worker --agent codex-implementation
+python -m system.services.worker --agent codex-verification
+python -m system.services.worker --agent codex-improvement
+```
+
+Use lane-specific workers when Hermes decomposes broad work into research,
+implementation, verification, documentation, and improvement subtasks.
+
 ## Backend Selection
 
 Use dry-run mode for smoke tests:

@@ -9,7 +9,7 @@ def main() -> None:
     queue.export_json()
     counts = {
         status: len(queue.list(status=status, limit=1000))
-        for status in ("pending", "active", "awaiting_approval", "stalled", "completed", "failed", "cancelled")
+        for status in ("pending", "planned", "active", "awaiting_approval", "stalled", "completed", "failed", "cancelled")
     }
     AuditLog().write(agent="queue-watcher", action="export_json", result="ok", counts=counts)
 

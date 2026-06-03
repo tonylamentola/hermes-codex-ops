@@ -171,9 +171,10 @@ class Worker:
     notifier: TelegramNotifier
     hermes: HermesCoordinator
     control: ControlState
+    assigned_agent: str = "codex"
 
     @classmethod
-    def create(cls) -> "Worker":
+    def create(cls, *, assigned_agent: str = "codex") -> "Worker":
         audit = AuditLog()
         queue = TaskQueue()
         memory = MemoryStore()
@@ -186,6 +187,7 @@ class Worker:
             notifier=TelegramNotifier(audit),
             hermes=hermes,
             control=ControlState.create(),
+            assigned_agent=assigned_agent,
         )
 
     async def run_once(self) -> Task | None:
@@ -193,7 +195,7 @@ class Worker:
             self.audit.write(agent="worker", action="poll", result="paused")
             return None
 
-        task = self.queue.claim_next(assigned_agent="codex")
+        task = self.queue.claim_next(assigned_agent=self.assigned_agent)
         if not task:
             self.audit.write(agent="worker", action="poll", result="idle")
             return None
@@ -210,7 +212,7 @@ class Worker:
             )
             return awaiting
 
-        self.audit.write(agent="worker", action="claim", result="active", task_id=task.id)
+        self.audit.write(agent="worker", action="claim", result="active", task_id=task.id, assigned_agent=self.assigned_agent)
         await self.notifier.send(
             f"Task started: {short_task_id(task)}\n{task.summary}",
             chat_ids=task_chat_ids(task),
@@ -279,14 +281,14 @@ class Worker:
 
     async def run_forever(self) -> None:
         self.memory.ensure_baseline()
-        self.audit.write(agent="worker", action="start", result="ok", backend=self.hermes.backend.name)
+        self.audit.write(agent="worker", action="start", result="ok", backend=self.hermes.backend.name, assigned_agent=self.assigned_agent)
         while True:
             await self.run_once()
             await asyncio.sleep(settings.worker_poll_seconds)
 
 
-async def main_async(*, once: bool = False) -> None:
-    worker = Worker.create()
+async def main_async(*, once: bool = False, assigned_agent: str = "codex") -> None:
+    worker = Worker.create(assigned_agent=assigned_agent)
     if once:
         await worker.run_once()
     else:
@@ -298,8 +300,9 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Durable Codex worker loop")
     parser.add_argument("--once", action="store_true", help="Process at most one pending task and exit")
+    parser.add_argument("--agent", default="codex", help="Assigned-agent lane to claim from")
     args = parser.parse_args()
-    asyncio.run(main_async(once=args.once))
+    asyncio.run(main_async(once=args.once, assigned_agent=args.agent))
 
 
 if __name__ == "__main__":

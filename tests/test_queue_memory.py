@@ -25,6 +25,18 @@ def test_queue_claims_next_task(tmp_path: Path) -> None:
     assert queue.get(low.id).status == "pending"
 
 
+def test_queue_claims_only_requested_agent_lane(tmp_path: Path) -> None:
+    queue = TaskQueue(database_path=tmp_path / "queue.sqlite3", tasks_dir=tmp_path / "tasks")
+    queue.create(summary="implementation", assigned_agent="codex-implementation", priority=9)
+    research = queue.create(summary="research", assigned_agent="codex-research", priority=1)
+
+    claimed = queue.claim_next(assigned_agent="codex-research")
+
+    assert claimed is not None
+    assert claimed.id == research.id
+    assert queue.list(status="pending")[0].assigned_agent == "codex-implementation"
+
+
 def test_memory_appends_markdown(tmp_path: Path) -> None:
     memory = MemoryStore(root=tmp_path / "memory")
     memory.ensure_baseline()

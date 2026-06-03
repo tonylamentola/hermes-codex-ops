@@ -9,6 +9,8 @@ Telegram is the command center and notification surface.
 - `cancel`, `stop`, `no`, or `nevermind`: cancel the latest pending task from that chat
 - `/status`: queue counts and platform status
 - `/submit TASK SUMMARY`: create a pending task from Telegram
+- `/plan TASK SUMMARY`: create a root task and decomposition subtasks across named worker lanes
+- `/audit_capabilities`: write and display the current Hermes capability audit
 - `/projects`: active project memory
 - `/deployments`: deployment history
 - `/tasks`: recent tasks

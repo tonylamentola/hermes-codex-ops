@@ -49,7 +49,7 @@ def test_worker_executes_backend_and_extracts_artifacts_from_result(tmp_path: Pa
     )
     notifier = FakeNotifier()
     control = ControlState(path=tmp_path / "config" / "control-state.json", audit=audit)
-    queue.create(summary="Create final image", payload={"approved": True})
+    queue.create(summary="Create final image", assigned_agent="codex", payload={"approved": True})
 
     worker = Worker(queue=queue, memory=memory, audit=audit, notifier=notifier, hermes=hermes, control=control)
     completed = asyncio.run(worker.run_once())
