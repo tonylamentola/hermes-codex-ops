@@ -11,8 +11,18 @@ This repository implements a persistent AI operations platform. Preserve these a
 
 Before changing behavior, check:
 
-- [docs/SYSTEM_OVERVIEW.md](/Users/anthonylamentola/hermes-codex-ops/docs/SYSTEM_OVERVIEW.md)
-- [docs/MEMORY_RULES.md](/Users/anthonylamentola/hermes-codex-ops/docs/MEMORY_RULES.md)
-- [docs/QUEUE_RULES.md](/Users/anthonylamentola/hermes-codex-ops/docs/QUEUE_RULES.md)
+- [docs/SYSTEM_OVERVIEW.md](/home/anthony/hermes-codex-ops/docs/SYSTEM_OVERVIEW.md)
+- [docs/MEMORY_RULES.md](/home/anthony/hermes-codex-ops/docs/MEMORY_RULES.md)
+- [docs/QUEUE_RULES.md](/home/anthony/hermes-codex-ops/docs/QUEUE_RULES.md)
+- [docs/CONTEXT_ROUTING.md](/home/anthony/hermes-codex-ops/docs/CONTEXT_ROUTING.md)
+- [docs/DATA_CONTINUITY.md](/home/anthony/hermes-codex-ops/docs/DATA_CONTINUITY.md)
+
+Before meaningful work from Codex, Telegram, Open WebUI, dashboard, or the VPS worker, resolve project/domain context with Hermes:
+
+```bash
+python -m system.scripts.hermes_context "natural language task"
+```
+
+If the context packet says clarification is needed, ask one concise question before acting. Never mix outreach/email context into game-dev tasks, and never mix game assets into outreach tasks.
 
 Never create uncontrolled Git commits. Any commit must have an explicit human-approved summary.
