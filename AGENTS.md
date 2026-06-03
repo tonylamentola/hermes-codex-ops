@@ -26,3 +26,12 @@ python -m system.scripts.hermes_context "natural language task"
 If the context packet says clarification is needed, ask one concise question before acting. Never mix outreach/email context into game-dev tasks, and never mix game assets into outreach tasks.
 
 Never create uncontrolled Git commits. Any commit must have an explicit human-approved summary.
+
+When starting or finishing work that changes project files, explicitly report Git state:
+
+- current branch
+- whether changes are committed
+- whether the branch is pushed to GitHub
+- whether the live deployment/runtime has been updated, if applicable
+
+Do not let the operator assume local, GitHub, WSL, and VPS state are the same. For this project, WSL is a build/dev mirror; Hostinger VPS is the live Telegram/Hermes runtime.
