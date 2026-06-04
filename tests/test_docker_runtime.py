@@ -7,6 +7,7 @@ def test_docker_image_installs_codex_cli() -> None:
 
     assert "https://chatgpt.com/codex/install.sh" in dockerfile
     assert "codex --version" in dockerfile
+    assert "find /app/.codex /root/.codex" in dockerfile
     assert "readlink -f \"$CODEX_BIN\"" in dockerfile
     assert "install -m 0755 \"$CODEX_BIN\" /usr/local/bin/codex" in dockerfile
     assert "CODEX_HOME=/app/.codex" in dockerfile
