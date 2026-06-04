@@ -20,12 +20,16 @@ CODEX_CLI_MODEL=gpt-5.3-codex
 CODEX_CLI_SANDBOX=read-only
 ```
 
-Then run:
+Then run as root so Docker can mount the login directory into the worker and Telegram containers:
 
 ```bash
 codex login
 codex login status
+cd /opt/hermes-codex-ops/system/docker
+docker compose run --rm worker codex login status
 ```
+
+The Codex login files live under `/root/.codex` and are mounted read-only into Codex-calling containers. Do not commit or copy those files into the repository.
 
 ## GitHub Secrets
 
