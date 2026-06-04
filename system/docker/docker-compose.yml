@@ -10,7 +10,7 @@ services:
       - ../../logs:/app/logs
       - ../../repos:/app/repos
       - ../../config:/app/config
-      - /root/.codex:/root/.codex:ro
+      - /root/.codex:/codex-auth:ro
     command: ["python", "-m", "system.hermes.main", "status"]
 
   telegram:
@@ -24,7 +24,7 @@ services:
       - ../../logs:/app/logs
       - ../../repos:/app/repos
       - ../../config:/app/config
-      - /root/.codex:/root/.codex:ro
+      - /root/.codex:/codex-auth:ro
     command: ["python", "-m", "system.telegram.bot"]
     restart: unless-stopped
 
@@ -39,7 +39,7 @@ services:
       - ../../logs:/app/logs
       - ../../repos:/app/repos
       - ../../config:/app/config
-      - /root/.codex:/root/.codex:ro
+      - /root/.codex:/codex-auth:ro
     command: ["python", "-m", "system.services.worker"]
     restart: unless-stopped
 
@@ -86,7 +86,7 @@ services:
     volumes:
       - ../../memory:/app/memory
       - ../../logs:/app/logs
-      - /root/.codex:/root/.codex:ro
+      - /root/.codex:/codex-auth:ro
     command: ["sh", "-c", "while true; do python -m system.watchers.memory_compression_watcher; sleep 1800; done"]
     restart: unless-stopped
 
@@ -99,7 +99,7 @@ services:
       - ../../memory:/app/memory
       - ../../logs:/app/logs
       - ../../config:/app/config
-      - /root/.codex:/root/.codex:ro
+      - /root/.codex:/codex-auth:ro
     command: ["sh", "-c", "while true; do python -m system.watchers.github_sync_watcher; sleep 900; done"]
     restart: unless-stopped
 
@@ -112,6 +112,6 @@ services:
       - ../../memory:/app/memory
       - ../../logs:/app/logs
       - ../../config:/app/config
-      - /root/.codex:/root/.codex:ro
+      - /root/.codex:/codex-auth:ro
     command: ["sh", "-c", "while true; do python -m system.watchers.deployment_watcher; sleep 300; done"]
     restart: unless-stopped

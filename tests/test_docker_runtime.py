@@ -9,7 +9,19 @@ def test_docker_image_installs_codex_cli() -> None:
     assert "codex --version" in dockerfile
     assert "readlink -f \"$CODEX_BIN\"" in dockerfile
     assert "install -m 0755 \"$CODEX_BIN\" /usr/local/bin/codex" in dockerfile
+    assert "CODEX_HOME=/app/.codex" in dockerfile
+    assert "ENTRYPOINT [\"/usr/local/bin/hermes-docker-entrypoint\"]" in dockerfile
     assert "/root/.local/bin" in dockerfile
+
+
+def test_docker_entrypoint_copies_auth_to_writable_codex_home() -> None:
+    entrypoint = Path("system/docker/entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "CODEX_AUTH_SOURCE" in entrypoint
+    assert "/codex-auth" in entrypoint
+    assert "auth.json" in entrypoint
+    assert "config.toml" in entrypoint
+    assert "exec \"$@\"" in entrypoint
 
 
 def service_block(compose: str, service: str) -> str:
@@ -21,6 +33,8 @@ def service_block(compose: str, service: str) -> str:
 def test_compose_mounts_codex_login_for_codex_callers() -> None:
     compose = Path("system/docker/docker-compose.yml").read_text(encoding="utf-8")
 
-    assert compose.count("/root/.codex:/root/.codex:ro") >= 4
+    assert "/root/.codex:/root/.codex:ro" not in compose
+    assert compose.count("/root/.codex:/codex-auth:ro") >= 4
     for service in ("telegram:", "worker:", "watcher-memory-compression:"):
-        assert "/root/.codex:/root/.codex:ro" in service_block(compose, service)
+        block = service_block(compose, service)
+        assert "/root/.codex:/codex-auth:ro" in block
