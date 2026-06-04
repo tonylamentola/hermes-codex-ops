@@ -43,12 +43,16 @@ CODEX_CLI_SANDBOX=read-only
 WORKER_REQUIRE_APPROVAL=true
 ```
 
-Run this once on the VPS:
+Run this once as root on the VPS, then verify the Docker worker can see the same login:
 
 ```bash
 codex login
 codex login status
+cd /opt/hermes-codex-ops/system/docker
+docker compose run --rm worker codex login status
 ```
+
+The Compose file mounts `/root/.codex` read-only into Codex-calling containers. If `codex login` was run as a non-root user, repeat it as root or update the mount intentionally.
 
 GitHub repository secrets can be used by GitHub Actions, but their values cannot be read back by this platform. If a token only exists as a GitHub secret, either run the platform through a GitHub Actions workflow that injects the secret, or paste the token into the VPS `.env` manually.
 
