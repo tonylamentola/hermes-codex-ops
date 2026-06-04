@@ -6,6 +6,8 @@ def test_docker_image_installs_codex_cli() -> None:
     dockerfile = Path("system/docker/Dockerfile").read_text(encoding="utf-8")
 
     assert "https://chatgpt.com/codex/install.sh" in dockerfile
+    assert "bubblewrap" in dockerfile
+    assert "bwrap --version" in dockerfile
     assert "codex --version" in dockerfile
     assert "find /app/.codex /root/.codex" in dockerfile
     assert "readlink -f \"$CODEX_BIN\"" in dockerfile

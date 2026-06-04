@@ -12,12 +12,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 RUN mkdir -p /app/.codex /app/.config /app/.cache
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git ripgrep \
+    && apt-get install -y --no-install-recommends bubblewrap ca-certificates curl git ripgrep \
     && curl -fsSL https://chatgpt.com/codex/install.sh | sh \
     && CODEX_BIN="$(command -v codex || find /app/.codex /root/.codex -type f -path '*/bin/codex' -perm /111 2>/dev/null | head -n 1)" \
     && test -n "$CODEX_BIN" \
     && CODEX_BIN="$(readlink -f "$CODEX_BIN")" \
     && install -m 0755 "$CODEX_BIN" /usr/local/bin/codex \
+    && bwrap --version \
     && codex --version \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
