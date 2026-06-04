@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime
 import html
 from pathlib import Path
@@ -18,7 +19,7 @@ from system.services.memory import MemoryStore
 from system.services.queue import TaskQueue
 from system.services.queue import Task
 from system.services.settings import settings
-from system.services.worker import artifact_summary
+from system.services.worker import Worker, artifact_summary
 
 
 audit = AuditLog()
@@ -238,6 +239,63 @@ def _approve_task(task_id: str, *, approved_by: str) -> Task:
     return approved
 
 
+def _approved_text(task: Task) -> str:
+    return (
+        f"Approved: {task.id[:8]}\n"
+        f"Status: {task.status}\n\n"
+        "I will wake the worker now and report back if it does not start."
+    )
+
+
+async def _wake_worker_after_approval(context: ContextTypes.DEFAULT_TYPE, task_id: str, chat_id: int | None) -> None:
+    await asyncio.sleep(0.25)
+    try:
+        processed = await Worker.create().run_once()
+        audit.write(
+            agent="telegram",
+            action="approval_worker_wake",
+            result="processed" if processed else "idle",
+            task_id=processed.id if processed else task_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        audit.write(
+            agent="telegram",
+            action="approval_worker_wake",
+            result="error",
+            task_id=task_id,
+            error=str(exc)[:500],
+        )
+        if chat_id is not None:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"Approved task {task_id[:8]}, but worker wake-up failed:\n{type(exc).__name__}: {str(exc)[:900]}",
+            )
+        return
+
+    await asyncio.sleep(10)
+    fresh = queue.get(task_id)
+    if not fresh or chat_id is None:
+        return
+    if fresh.status in {"pending", "awaiting_approval"}:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"Task {fresh.id[:8]} is still {fresh.status} after approval.\n"
+                "The background worker did not claim it yet. Use /status or /task "
+                f"{fresh.id} for details."
+            ),
+        )
+    elif fresh.status == "active":
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Task {fresh.id[:8]} is active now. I will send the result when the worker finishes.",
+        )
+
+
+def _schedule_worker_wake(context: ContextTypes.DEFAULT_TYPE, task: Task, chat_id: int | None) -> None:
+    context.application.create_task(_wake_worker_after_approval(context, task.id, chat_id))
+
+
 def _cancel_task(task_id: str) -> Task:
     task = queue.update_status(task_id, "cancelled")
     memory.append_markdown("agent-status.md", "Task cancelled", f"- Task: `{task.id}`\n- Summary: {task.summary}")
@@ -329,7 +387,8 @@ async def plain_text_task(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         if normalized in APPROVE_WORDS:
             approved = _approve_task(task.id, approved_by="telegram-text")
-            await update.message.reply_text(f"Approved: {approved.id[:8]}\nI will start it from the queue.")
+            await update.message.reply_text(_approved_text(approved))
+            _schedule_worker_wake(context, approved, update.effective_chat.id if update.effective_chat else None)
             return
         cancelled = _cancel_task(task.id)
         await update.message.reply_text(f"Cancelled: {cancelled.id[:8]}")
@@ -435,7 +494,8 @@ async def task_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if action == "approve":
         approved = _approve_task(task.id, approved_by="telegram-button")
         await query.answer("Approved")
-        await query.edit_message_text(f"Approved: {approved.id[:8]}\n{approved.summary}")
+        await query.edit_message_text(f"{_approved_text(approved)}\n\n{approved.summary}")
+        _schedule_worker_wake(context, approved, update.effective_chat.id if update.effective_chat else None)
     elif action == "cancel":
         cancelled = _cancel_task(task.id)
         await query.answer("Cancelled")
@@ -610,7 +670,8 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Unknown task: {task_id}")
         return
     approved = _approve_task(task.id, approved_by="telegram-command")
-    await update.message.reply_text(f"Approved task: {approved.id}")
+    await update.message.reply_text(_approved_text(approved))
+    _schedule_worker_wake(context, approved, update.effective_chat.id if update.effective_chat else None)
 
 
 async def projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
