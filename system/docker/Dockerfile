@@ -9,9 +9,10 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git ripgrep \
     && curl -fsSL https://chatgpt.com/codex/install.sh | sh \
-    && CODEX_BIN="$(command -v codex || find /root -type f -name codex -perm /111 | head -n 1)" \
+    && CODEX_BIN="$(command -v codex || find /root/.codex -type f -path '*/bin/codex' -perm /111 | head -n 1)" \
     && test -n "$CODEX_BIN" \
-    && ln -sf "$CODEX_BIN" /usr/local/bin/codex \
+    && CODEX_BIN="$(readlink -f "$CODEX_BIN")" \
+    && install -m 0755 "$CODEX_BIN" /usr/local/bin/codex \
     && codex --version \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
