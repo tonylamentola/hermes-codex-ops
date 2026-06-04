@@ -19,7 +19,7 @@ cd system/docker
 docker compose up -d --build
 ```
 
-The Compose stack includes Hermes, Telegram, the durable worker, and initial watcher services. Start with `WORKER_BACKEND=dry-run`; switch to `WORKER_BACKEND=codex-cli` after `codex login` works on the VPS, or `WORKER_BACKEND=codex-api` only after `OPENAI_API_KEY` is configured.
+The Compose stack includes Hermes, Telegram, the durable worker, and initial watcher services. The Docker image installs the Codex CLI and mounts root's `/root/.codex` login directory read-only into Codex-calling services. Start with `WORKER_BACKEND=dry-run`; switch to `WORKER_BACKEND=codex-cli` after `codex login` works as root on the VPS and `docker compose run --rm worker codex login status` succeeds, or `WORKER_BACKEND=codex-api` only after `OPENAI_API_KEY` is configured.
 
 For first live use, consider setting:
 
