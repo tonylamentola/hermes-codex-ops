@@ -20,6 +20,10 @@ CODEX_CLI_MODEL=gpt-5.3-codex
 CODEX_CLI_SANDBOX=read-only
 ```
 
+For the Docker Compose VPS runtime, `CODEX_CLI_SANDBOX` is overridden to
+`danger-full-access` inside Codex-calling containers. Keep the setting above for
+non-Docker worker runs; Docker itself is the sandbox boundary on the VPS.
+
 Then run as root so Docker can mount the login directory into the worker and Telegram containers:
 
 ```bash

@@ -53,6 +53,11 @@ codex login
 WORKER_BACKEND=codex-cli CODEX_CLI_SANDBOX=read-only python -m system.services.worker
 ```
 
+When running through `system/docker/docker-compose.yml`, Compose overrides the
+Codex CLI sandbox to `danger-full-access` for Codex-calling containers. The
+container and explicit volume mounts are the sandbox boundary in that runtime,
+because Hostinger-style Docker hosts may block nested bubblewrap namespaces.
+
 ## Recovery
 
 ```bash

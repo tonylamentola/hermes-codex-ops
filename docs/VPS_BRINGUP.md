@@ -43,6 +43,11 @@ CODEX_CLI_SANDBOX=read-only
 WORKER_REQUIRE_APPROVAL=true
 ```
 
+The Docker Compose runtime overrides `CODEX_CLI_SANDBOX` to
+`danger-full-access` for Codex-calling containers. This is intentional on VPS
+Docker hosts that block nested bubblewrap/user namespaces; the Docker container
+and mounted volumes are the sandbox boundary there.
+
 Run this once as root on the VPS, then verify the Docker worker can see the same login:
 
 ```bash

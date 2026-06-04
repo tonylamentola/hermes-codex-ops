@@ -41,3 +41,18 @@ def test_compose_mounts_codex_login_for_codex_callers() -> None:
     for service in ("telegram:", "worker:", "watcher-memory-compression:"):
         block = service_block(compose, service)
         assert "/root/.codex:/codex-auth:ro" in block
+
+
+def test_compose_uses_container_boundary_for_codex_cli_sandbox() -> None:
+    compose = Path("system/docker/docker-compose.yml").read_text(encoding="utf-8")
+
+    for service in (
+        "hermes:",
+        "telegram:",
+        "worker:",
+        "watcher-memory-compression:",
+        "watcher-github:",
+        "watcher-deployments:",
+    ):
+        block = service_block(compose, service)
+        assert "CODEX_CLI_SANDBOX: danger-full-access" in block
