@@ -237,12 +237,13 @@ class Worker:
             )
             self.audit.write(agent="worker", action="complete", result="ok", task_id=task.id)
             sendable = auto_send_artifacts(completed.payload.get("artifacts", []))
+            result_preview = worker_result.strip()[:1500] or "No result text returned."
             if sendable:
-                artifact_note = f"Sending {len(sendable)} artifact file(s) now."
+                artifact_note = f"{result_preview}\n\nSending {len(sendable)} artifact file(s) now."
             elif completed.payload.get("artifacts"):
-                artifact_note = "I found artifact paths, but no Telegram-sendable files."
+                artifact_note = f"{result_preview}\n\nI found artifact paths, but no Telegram-sendable files."
             else:
-                artifact_note = worker_result[:1500]
+                artifact_note = result_preview
             completion_message = (
                 f"Task completed: {short_task_id(completed)}\n{completed.summary}\n\n"
                 f"{artifact_note}\n\n"

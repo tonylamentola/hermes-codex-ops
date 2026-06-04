@@ -62,7 +62,30 @@ def test_worker_executes_backend_and_extracts_artifacts_from_result(tmp_path: Pa
     assert fresh.payload["worker_result"] == f"Done. Final image: {artifact}"
     assert fresh.payload["artifacts"][0]["display_path"] == str(artifact)
     assert notifier.files == [str(artifact)]
+    assert "Done. Final image:" in notifier.messages[-1]
     assert "context-pack.md" not in notifier.messages[-1]
+
+
+def test_worker_completion_includes_result_when_artifacts_are_not_sendable(tmp_path: Path) -> None:
+    memory_file = tmp_path / "memory" / "agent-status.md"
+    memory_file.parent.mkdir(parents=True)
+    memory_file.write_text("status", encoding="utf-8")
+    result = f"Runtime smoketest complete. Codex exec works. Recorded result in `{memory_file}`."
+    queue = TaskQueue(database_path=tmp_path / "tasks" / "queue.sqlite3", tasks_dir=tmp_path / "tasks")
+    memory = MemoryStore(root=tmp_path / "memory")
+    audit = AuditLog(path=tmp_path / "logs" / "ops.jsonl")
+    hermes = HermesCoordinator(queue=queue, memory=memory, audit=audit, backend=FakeBackend(result))
+    notifier = FakeNotifier()
+    control = ControlState(path=tmp_path / "config" / "control-state.json", audit=audit)
+    queue.create(summary="Runtime smoke", assigned_agent="codex", payload={"approved": True})
+
+    worker = Worker(queue=queue, memory=memory, audit=audit, notifier=notifier, hermes=hermes, control=control)
+    completed = asyncio.run(worker.run_once())
+
+    assert completed is not None
+    assert notifier.files == []
+    assert "Runtime smoketest complete. Codex exec works." in notifier.messages[-1]
+    assert "I found artifact paths, but no Telegram-sendable files." in notifier.messages[-1]
 
 
 def test_auto_send_artifacts_excludes_context_docs() -> None:
